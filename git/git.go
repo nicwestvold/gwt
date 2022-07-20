@@ -16,6 +16,7 @@ type Repo struct {
 
 // git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
 // when cloning a bare repo, run this command
+// taken from: https://morgan.cugerone.com/blog/workarounds-to-git-worktree-using-bare-repository-and-cannot-fetch-remote-branches/
 
 func NewRepo() *Repo {
 	repo_dir := os.Getenv("CAPELLA_REPO")
