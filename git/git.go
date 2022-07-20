@@ -14,6 +14,9 @@ type Repo struct {
 	Dir string
 }
 
+// git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
+// when cloning a bare repo, run this command
+
 func NewRepo() *Repo {
 	repo_dir := os.Getenv("CAPELLA_REPO")
 	if repo_dir == "" {
