@@ -81,7 +81,7 @@ func (r *Repo) List() error {
 func (r *Repo) Add(name string) error {
 	var buf bytes.Buffer
 
-	cmd := exec.Command("git", "worktree", "add", name)
+	cmd := exec.Command("git", "worktree", "add", name, name)
 	cmd.Dir = r.Dir
 	cmd.Stdout = &buf
 	err := cmd.Run()
