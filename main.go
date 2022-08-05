@@ -43,11 +43,12 @@ var addCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		isExistingBranch, _ := cmd.Flags().GetBool("branch")
 
 		name := args[0]
 
 		repo := git.NewRepo()
-		err = repo.Add(name)
+		err = repo.Add(name, isExistingBranch)
 		if err != nil {
 			return err
 		}
@@ -83,6 +84,8 @@ var removeCmd = &cobra.Command{
 }
 
 func main() {
+	addCmd.PersistentFlags().BoolP("branch", "b", false, "Create a worktree using an existing branch")
+
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(addCmd)
 	rootCmd.AddCommand(removeCmd)

@@ -78,10 +78,15 @@ func (r *Repo) List() error {
 	return nil
 }
 
-func (r *Repo) Add(name string) error {
+func (r *Repo) Add(name string, isExistingBranch bool) error {
 	var buf bytes.Buffer
 
-	cmd := exec.Command("git", "worktree", "add", name, name)
+	var cmd *exec.Cmd
+	if isExistingBranch {
+		cmd = exec.Command("git", "worktree", "add", name, name)
+	} else {
+		cmd = exec.Command("git", "worktree", "add", name)
+	}
 	cmd.Dir = r.Dir
 	cmd.Stdout = &buf
 	err := cmd.Run()
