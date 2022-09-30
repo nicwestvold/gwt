@@ -71,11 +71,12 @@ var removeCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		isForced, _ := cmd.Flags().GetBool("force")
 
 		name := args[0]
 
 		repo := git.NewRepo()
-		err = repo.Remove(name)
+		err = repo.Remove(name, isForced)
 		if err != nil {
 			return err
 		}
@@ -85,6 +86,7 @@ var removeCmd = &cobra.Command{
 
 func main() {
 	addCmd.PersistentFlags().BoolP("branch", "b", false, "Create a worktree using an existing branch")
+	removeCmd.PersistentFlags().BoolP("force", "f", false, "Force delete a worktree")
 
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(addCmd)

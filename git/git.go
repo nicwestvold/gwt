@@ -99,10 +99,15 @@ func (r *Repo) Add(name string, isExistingBranch bool) error {
 	return nil
 }
 
-func (r *Repo) Remove(name string) error {
+func (r *Repo) Remove(name string, isForced bool) error {
 	var buf bytes.Buffer
 
-	cmd := exec.Command("git", "worktree", "remove", name)
+	var cmd *exec.Cmd
+	if isForced {
+		cmd = exec.Command("git", "worktree", "remove", "--force", name)
+	} else {
+		cmd = exec.Command("git", "worktree", "remove", name)
+	}
 	cmd.Dir = r.Dir
 	cmd.Stdout = &buf
 	err := cmd.Run()
