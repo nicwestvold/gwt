@@ -45,8 +45,18 @@ For example, 'gwt list' runs 'git worktree list'.
 
 Run 'git worktree --help' for the full git worktree documentation.
 
+Pass-through commands:
+  list    List worktrees
+  lock    Lock a worktree
+  move    Move a worktree
+  prune   Prune stale worktree information
+  remove  Remove a worktree
+  repair  Repair worktree administrative files
+  unlock  Unlock a worktree
+
 Aliases:
   ls    list
+  rm    remove
 
 Additional commands:
   init  Initialize gwt configuration (fetch config, file copy settings)
@@ -58,7 +68,9 @@ Enhanced commands:
 var addCmd = &cobra.Command{
 	Use:   "add [git worktree add flags] <path> [<commit-ish>]",
 	Short: "Create a worktree and copy configured files",
-	Long: `Wraps 'git worktree add' and copies files configured via 'gwt init --copy'.
+	Long: `Wraps 'git worktree add' and copies configured files into the new worktree.
+
+By default, .env is copied. Additional files can be configured via 'gwt init --copy'.
 
 All flags and arguments are passed directly to 'git worktree add'.
 Run 'git worktree add --help' for available options.`,
