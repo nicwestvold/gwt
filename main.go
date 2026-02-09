@@ -1,98 +1,161 @@
 package main
 
 import (
-	"errors"
-	"log"
+	"fmt"
+	"os"
 
+	"github.com/nicwestvold/gwt/config"
 	"github.com/nicwestvold/gwt/git"
 	"github.com/spf13/cobra"
 )
 
-var rootCmd = &cobra.Command{
-	Use:   "gwt",
-	Short: "Use git worktrees with ease",
+var aliases = map[string]string{
+	"ls": "list",
+	"rm": "remove",
 }
 
-var listCmd = &cobra.Command{
-	Use:     "list",
-	Aliases: []string{"ls"},
-	Short:   "List current worktrees",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		err := git.InRepo()
-		if err != nil {
-			return err
-		}
+var rootCmd = &cobra.Command{
+	Use:   "gwt [command]",
+	Short: "A convenience wrapper around git worktree",
+	Long: `gwt is a thin wrapper around git worktree.
 
-		repo := git.NewRepo()
-		repo.List()
-		return nil
-	},
+Any command not listed below is passed directly to git worktree.
+For example, 'gwt list' runs 'git worktree list'.
+
+Run 'git worktree --help' for the full git worktree documentation.
+
+Aliases:
+  ls    list
+
+Additional commands:
+  init  Initialize gwt configuration (fetch config, file copy settings)
+
+Enhanced commands:
+  add   Create a worktree and copy configured files`,
 }
 
 var addCmd = &cobra.Command{
-	Use:   "add",
-	Short: "Add a new worktree",
-	Args: func(cmd *cobra.Command, args []string) error {
-		if len(args) < 1 {
-			return errors.New("requires a worktree name")
-		}
-		return nil
-	},
+	Use:   "add [git worktree add flags] <path> [<commit-ish>]",
+	Short: "Create a worktree and copy configured files",
+	Long: `Wraps 'git worktree add' and copies files configured via 'gwt init --copy'.
+
+All flags and arguments are passed directly to 'git worktree add'.
+Run 'git worktree add --help' for available options.`,
+	DisableFlagParsing: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		err := git.InRepo()
+		for _, a := range args {
+			if a == "--help" || a == "-h" {
+				return cmd.Help()
+			}
+		}
+
+		repo, err := git.NewRepo()
 		if err != nil {
 			return err
 		}
-		isExistingBranch, _ := cmd.Flags().GetBool("branch")
 
-		name := args[0]
-
-		repo := git.NewRepo()
-		err = repo.Add(name, isExistingBranch)
+		worktreePath, err := repo.Add(args)
 		if err != nil {
 			return err
 		}
+
+		if worktreePath == "" {
+			return nil
+		}
+
+		cfg, err := config.Load(repo.Dir)
+		if err != nil {
+			return err
+		}
+
+		if len(cfg.CopyFiles) == 0 {
+			return nil
+		}
+
+		mainPath, err := repo.WorktreePathForBranch(cfg.MainBranch)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v; skipping file copy\n", err)
+			return nil
+		}
+
+		for _, f := range cfg.CopyFiles {
+			if err := git.CopyFileToWorktree(mainPath, worktreePath, f); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not copy %s: %v\n", f, err)
+			}
+		}
+
 		return nil
 	},
 }
 
-var removeCmd = &cobra.Command{
-	Use:     "remove",
-	Aliases: []string{"rm"},
-	Short:   "Remove a new worktree",
-	Args: func(cmd *cobra.Command, args []string) error {
-		if len(args) < 1 {
-			return errors.New("requires a worktree name")
-		}
-		return nil
-	},
+var initCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Initialize gwt configuration for this repository",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		err := git.InRepo()
+		repo, err := git.NewRepo()
 		if err != nil {
 			return err
 		}
-		isForced, _ := cmd.Flags().GetBool("force")
 
-		name := args[0]
+		if repo.IsBare {
+			if err := repo.ConfigureFetch(); err != nil {
+				return fmt.Errorf("failed to configure fetch: %w", err)
+			}
+		}
 
-		repo := git.NewRepo()
-		err = repo.Remove(name, isForced)
-		if err != nil {
+		mainBranch, _ := cmd.Flags().GetString("main")
+		copyFiles, _ := cmd.Flags().GetStringSlice("copy")
+
+		cfg := config.Config{
+			MainBranch: mainBranch,
+			CopyFiles:  copyFiles,
+		}
+
+		if err := config.Save(repo.Dir, cfg); err != nil {
 			return err
 		}
+
 		return nil
 	},
 }
 
 func main() {
-	addCmd.PersistentFlags().BoolP("branch", "b", false, "Create a worktree using an existing branch")
-	removeCmd.PersistentFlags().BoolP("force", "f", false, "Force delete a worktree")
+	initCmd.Flags().StringP("main", "m", "main", "Set the main branch name")
+	initCmd.Flags().StringSliceP("copy", "c", nil, "Files to copy to new worktrees (repeatable)")
 
-	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(addCmd)
-	rootCmd.AddCommand(removeCmd)
+	rootCmd.AddCommand(initCmd)
+
+	// Check for pass-through before cobra runs
+	if len(os.Args) > 1 {
+		subcmd := os.Args[1]
+
+		// Resolve aliases
+		if replacement, ok := aliases[subcmd]; ok {
+			os.Args[1] = replacement
+			subcmd = replacement
+		}
+
+		known := map[string]bool{
+			"init": true, "add": true,
+			"help": true, "completion": true,
+			"--help": true, "-h": true,
+		}
+
+		if !known[subcmd] {
+			repo, err := git.NewRepo()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			if err := repo.Passthrough(os.Args[1:]); err != nil {
+				os.Exit(git.ExitCode(err))
+			}
+			return
+		}
+	}
 
 	if err := rootCmd.Execute(); err != nil {
-		log.Fatalln(err)
+		os.Exit(1)
 	}
 }
