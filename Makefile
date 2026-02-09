@@ -1,3 +1,5 @@
+VERSION := $(shell git describe --tags --always --dirty)
+
 .PHONY: build clean help install test
 
 help:
@@ -11,13 +13,13 @@ help:
 	@echo "  test     Run tests"
 
 build:
-	go build -o gwt .
+	go build -ldflags "-X main.version=$(VERSION)" -o gwt .
 
 clean:
 	rm -f gwt
 
 install:
-	go install .
+	go install -ldflags "-X main.version=$(VERSION)" .
 
 test:
 	go test ./...

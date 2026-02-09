@@ -3,15 +3,36 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/nicwestvold/gwt/config"
 	"github.com/nicwestvold/gwt/git"
 	"github.com/spf13/cobra"
 )
 
+var version = "dev"
+
 var aliases = map[string]string{
 	"ls": "list",
 	"rm": "remove",
+}
+
+func resolveVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return version
+}
+
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print the version of gwt",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println(resolveVersion())
+	},
 }
 
 var rootCmd = &cobra.Command{
@@ -123,8 +144,10 @@ func main() {
 	initCmd.Flags().StringP("main", "m", "main", "Set the main branch name")
 	initCmd.Flags().StringSliceP("copy", "c", nil, "Files to copy to new worktrees (repeatable)")
 
+	rootCmd.Version = resolveVersion()
 	rootCmd.AddCommand(addCmd)
 	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(versionCmd)
 
 	// Check for pass-through before cobra runs
 	if len(os.Args) > 1 {
@@ -137,9 +160,9 @@ func main() {
 		}
 
 		known := map[string]bool{
-			"init": true, "add": true,
+			"init": true, "add": true, "version": true,
 			"help": true, "completion": true,
-			"--help": true, "-h": true,
+			"--help": true, "-h": true, "--version": true,
 		}
 
 		if !known[subcmd] {
