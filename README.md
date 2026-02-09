@@ -13,6 +13,35 @@ A convenience wrapper around `git worktree` that reduces friction when working w
 
 Everything else (`gwt list`, `gwt remove`, etc.) is passed directly to `git worktree`.
 
+## Getting Started with Worktrees
+
+Worktrees work best with a **bare clone**. Instead of a normal `git clone`, run:
+
+```bash
+git clone --bare git@github.com:you/your-repo.git your-repo
+cd your-repo
+```
+
+This gives you a repo with no checked-out working directory — each worktree you create becomes its own isolated working directory. Then set up `gwt`:
+
+```bash
+gwt init --copy .env
+gwt add main        # create a worktree for your main branch
+gwt add my-feature  # start working on a feature
+```
+
+You'll end up with a structure like:
+
+```
+your-repo/            # bare repo (git internals)
+├── main/             # worktree for main branch
+│   └── .env          # copied automatically
+└── my-feature/       # worktree for feature branch
+    └── .env          # copied automatically
+```
+
+Each worktree is a full working directory with its own branch checked out, so you can switch between tasks without stashing or committing in-progress work.
+
 ## Install
 
 ```bash
