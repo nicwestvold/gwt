@@ -143,13 +143,12 @@ func (r *Repo) WorktreePathForBranch(branch string) (string, error) {
 	}
 
 	var currentPath string
-	for _, line := range strings.Split(buf.String(), "\n") {
-		if strings.HasPrefix(line, "worktree ") {
-			currentPath = strings.TrimPrefix(line, "worktree ")
+	for line := range strings.SplitSeq(buf.String(), "\n") {
+		if after, ok := strings.CutPrefix(line, "worktree "); ok {
+			currentPath = after
 		}
-		if strings.HasPrefix(line, "branch refs/heads/") {
-			b := strings.TrimPrefix(line, "branch refs/heads/")
-			if b == branch {
+		if after, ok := strings.CutPrefix(line, "branch refs/heads/"); ok {
+			if after == branch {
 				return currentPath, nil
 			}
 		}
@@ -158,7 +157,7 @@ func (r *Repo) WorktreePathForBranch(branch string) (string, error) {
 	return "", fmt.Errorf("no worktree found for branch %q", branch)
 }
 
-func CopyFileToWorktree(srcDir, dstDir, filename string) error {
+func CopyFileToWorktree(srcDir, dstDir, filename string) (retErr error) {
 	srcPath := filepath.Join(srcDir, filename)
 	dstPath := filepath.Join(dstDir, filename)
 
@@ -182,7 +181,11 @@ func CopyFileToWorktree(srcDir, dstDir, filename string) error {
 	if err != nil {
 		return err
 	}
-	defer srcFile.Close()
+	defer func() {
+		if err := srcFile.Close(); err != nil && retErr == nil {
+			retErr = err
+		}
+	}()
 
 	info, err := srcFile.Stat()
 	if err != nil {
@@ -197,7 +200,11 @@ func CopyFileToWorktree(srcDir, dstDir, filename string) error {
 	if err != nil {
 		return err
 	}
-	defer dstFile.Close()
+	defer func() {
+		if err := dstFile.Close(); err != nil && retErr == nil {
+			retErr = err
+		}
+	}()
 
 	_, err = io.Copy(dstFile, srcFile)
 	return err

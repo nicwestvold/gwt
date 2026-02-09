@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 const configFile = ".gwt.json"
@@ -17,12 +18,12 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		MainBranch: "main",
-		CopyFiles:  nil,
+		CopyFiles:  []string{".env"},
 	}
 }
 
 func (c Config) IsDefault() bool {
-	return c.MainBranch == "main" && len(c.CopyFiles) == 0
+	return c.MainBranch == "main" && slices.Equal(c.CopyFiles, DefaultConfig().CopyFiles)
 }
 
 func Load(repoDir string) (Config, error) {
