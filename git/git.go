@@ -162,6 +162,22 @@ func CopyFileToWorktree(srcDir, dstDir, filename string) error {
 	srcPath := filepath.Join(srcDir, filename)
 	dstPath := filepath.Join(dstDir, filename)
 
+	srcAbs, err := filepath.Abs(srcPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve source path: %w", err)
+	}
+	if !strings.HasPrefix(srcAbs, srcDir+string(filepath.Separator)) && srcAbs != srcDir {
+		return fmt.Errorf("path %q escapes source directory", filename)
+	}
+
+	dstAbs, err := filepath.Abs(dstPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve destination path: %w", err)
+	}
+	if !strings.HasPrefix(dstAbs, dstDir+string(filepath.Separator)) && dstAbs != dstDir {
+		return fmt.Errorf("path %q escapes destination directory", filename)
+	}
+
 	srcFile, err := os.Open(srcPath)
 	if err != nil {
 		return err
