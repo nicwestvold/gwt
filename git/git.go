@@ -169,6 +169,11 @@ func Clone(url, dir string) (_ string, retErr error) {
 		return "", fmt.Errorf("failed to write .git file: %w", err)
 	}
 
+	gitignoreFile := filepath.Join(absDir, ".gitignore")
+	if err := os.WriteFile(gitignoreFile, []byte("*\n"), 0o644); err != nil {
+		return "", fmt.Errorf("failed to write .gitignore file: %w", err)
+	}
+
 	repo := &Repo{Dir: absDir, IsBare: true}
 	if err := repo.ConfigureFetch(); err != nil {
 		return "", fmt.Errorf("failed to configure fetch: %w", err)
