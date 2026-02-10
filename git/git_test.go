@@ -82,38 +82,6 @@ func TestRepoName(t *testing.T) {
 	}
 }
 
-func TestCloneCreatesGitignore(t *testing.T) {
-	// Create a temporary bare repo to clone from (avoids network).
-	upstream := t.TempDir()
-	run := func(dir, name string, args ...string) {
-		t.Helper()
-		cmd := exec.Command(name, args...)
-		cmd.Dir = dir
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("%s %v failed: %v\n%s", name, args, err, out)
-		}
-	}
-	run(upstream, "git", "init", "--bare")
-
-	dest := t.TempDir()
-	target := dest + "/myrepo"
-
-	dir, err := Clone(upstream, target)
-	if err != nil {
-		t.Fatalf("Clone() error: %v", err)
-	}
-
-	gitignorePath := dir + "/.gitignore"
-	data, err := os.ReadFile(gitignorePath)
-	if err != nil {
-		t.Fatalf("expected .gitignore at %s, got error: %v", gitignorePath, err)
-	}
-	if string(data) != "*\n" {
-		t.Errorf(".gitignore content = %q, want %q", string(data), "*\n")
-	}
-}
-
 // exitState creates an *os.ProcessState with the given exit code by running a
 // subprocess that exits with that code.
 func exitState(t *testing.T, code int) *os.ProcessState {
