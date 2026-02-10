@@ -21,6 +21,7 @@ func TestExtractWorktreePath(t *testing.T) {
 		{"boolean + value flag combo", []string{"--track", "-b", "branch", "path"}, "path"},
 		{"-- separator", []string{"--", "path"}, "path"},
 		{"flags then -- separator", []string{"-b", "branch", "--", "path"}, "path"},
+		{"--orphan flag", []string{"--orphan", "branch", "path"}, "path"},
 		{"empty args", []string{}, ""},
 		{"no path just flags", []string{"-b", "branch"}, ""},
 	}
@@ -41,7 +42,7 @@ func TestExitCode(t *testing.T) {
 		err  error
 		want int
 	}{
-		{"nil error", nil, 1},
+		{"nil error", nil, 0},
 		{"non-ExitError", errors.New("something"), 1},
 		{"ExitError with code 2", &exec.ExitError{ProcessState: exitState(t, 2)}, 2},
 	}

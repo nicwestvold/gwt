@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 )
 
@@ -20,14 +21,23 @@ type HookData struct {
 }
 
 func (d HookData) BuildCommand() string {
-	if d.PackageManager == "yarn" {
+	switch d.PackageManager {
+	case "yarn":
 		return "yarn build"
+	case "":
+		return ""
+	default:
+		return d.PackageManager + " run build"
 	}
-	return d.PackageManager + " run build"
+}
+
+func shellEscape(s string) string {
+	return strings.ReplaceAll(s, "'", "'\\''")
 }
 
 func Generate(data HookData) (string, error) {
-	tmpl, err := template.New("post-checkout.sh.tmpl").ParseFS(templates, "templates/post-checkout.sh.tmpl")
+	funcMap := template.FuncMap{"shellEscape": shellEscape}
+	tmpl, err := template.New("post-checkout.sh.tmpl").Funcs(funcMap).ParseFS(templates, "templates/post-checkout.sh.tmpl")
 	if err != nil {
 		return "", fmt.Errorf("failed to parse hook template: %w", err)
 	}

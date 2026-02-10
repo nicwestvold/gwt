@@ -15,6 +15,7 @@ func TestBuildCommand(t *testing.T) {
 		{"yarn", "yarn build"},
 		{"pnpm", "pnpm run build"},
 		{"npm", "npm run build"},
+		{"", ""},
 	}
 
 	for _, tt := range tests {
@@ -25,6 +26,41 @@ func TestBuildCommand(t *testing.T) {
 				t.Errorf("BuildCommand() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestShellEscape(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{".env", ".env"},
+		{"no special chars", "no special chars"},
+		{"it's a file", "it'\\''s a file"},
+		{"two''quotes", "two'\\'''\\''quotes"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := shellEscape(tt.input)
+			if got != tt.want {
+				t.Errorf("shellEscape(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGenerateEscapesCopyFiles(t *testing.T) {
+	data := HookData{
+		BasePath:  "/repo",
+		CopyFiles: []string{"it's a file"},
+	}
+	got, err := Generate(data)
+	if err != nil {
+		t.Fatalf("Generate() error: %v", err)
+	}
+	if !strings.Contains(got, "'it'\\''s a file'") {
+		t.Errorf("output missing escaped filename\n---\n%s", got)
 	}
 }
 

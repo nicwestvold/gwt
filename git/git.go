@@ -16,15 +16,17 @@ type Repo struct {
 }
 
 func NewRepo() (*Repo, error) {
-	var buf bytes.Buffer
+	var buf, stderr bytes.Buffer
 
 	cmd := exec.Command("git", "rev-parse", "--is-bare-repository")
 	cmd.Stdout = &buf
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("not in a git repository: %w", err)
+		return nil, fmt.Errorf("not in a git repository: %w (%s)", err, strings.TrimSpace(stderr.String()))
 	}
 	isBare := strings.TrimSpace(buf.String()) == "true"
 	buf.Reset()
+	stderr.Reset()
 
 	var dir string
 	if isBare {
@@ -33,8 +35,9 @@ func NewRepo() (*Repo, error) {
 		cmd = exec.Command("git", "rev-parse", "--show-toplevel")
 	}
 	cmd.Stdout = &buf
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("failed to detect repo directory: %w", err)
+		return nil, fmt.Errorf("failed to detect repo directory: %w (%s)", err, strings.TrimSpace(stderr.String()))
 	}
 	dir = strings.TrimSpace(buf.String())
 
@@ -47,9 +50,11 @@ func NewRepo() (*Repo, error) {
 	// use cwd as Dir so worktrees are created as siblings.
 	if isBare {
 		if info, statErr := os.Lstat(".git"); statErr == nil && !info.IsDir() {
-			if cwd, cwdErr := filepath.Abs("."); cwdErr == nil {
-				dir = cwd
+			cwd, cwdErr := filepath.Abs(".")
+			if cwdErr != nil {
+				return nil, fmt.Errorf("failed to resolve working directory: %w", cwdErr)
 			}
+			dir = cwd
 		}
 	}
 
@@ -179,6 +184,9 @@ func Clone(url, dir string) (_ string, retErr error) {
 }
 
 func ExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		return exitErr.ExitCode()
@@ -187,12 +195,13 @@ func ExitCode(err error) int {
 }
 
 func (r *Repo) HooksDir() (string, error) {
-	var buf bytes.Buffer
+	var buf, stderr bytes.Buffer
 	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
 	cmd.Dir = r.Dir
 	cmd.Stdout = &buf
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to find git common dir: %w", err)
+		return "", fmt.Errorf("failed to find git common dir: %w (%s)", err, strings.TrimSpace(stderr.String()))
 	}
 	commonDir := strings.TrimSpace(buf.String())
 	if !filepath.IsAbs(commonDir) {
@@ -215,6 +224,9 @@ func (r *Repo) ConfigureFetch() error {
 
 	cmd = exec.Command("git", "config", "remote.origin.fetch", expected)
 	cmd.Dir = r.Dir
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to set remote.origin.fetch: %w", err)
+	}
+	return nil
 }
 

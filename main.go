@@ -136,8 +136,32 @@ The resulting directory is ready for 'gwt init' and 'gwt add'.`,
 			return err
 		}
 
+		mainBranch, _ := cmd.Flags().GetString("main")
+		copyFiles, _ := cmd.Flags().GetStringSlice("copy")
+		noCopy, _ := cmd.Flags().GetBool("no-copy")
+		versionManager, _ := cmd.Flags().GetString("version-manager")
+		packageManager, _ := cmd.Flags().GetString("package-manager")
+
+		if noCopy {
+			copyFiles = nil
+		} else if !cmd.Flags().Changed("copy") {
+			copyFiles = []string{".env"}
+		}
+
+		if versionManager != "" && !validVersionManagers[versionManager] {
+			return fmt.Errorf("invalid version manager %q: must be one of: asdf, mise", versionManager)
+		}
+		if packageManager != "" && !validPackageManagers[packageManager] {
+			return fmt.Errorf("invalid package manager %q: must be one of: pnpm, npm, yarn", packageManager)
+		}
+
 		repo := &git.Repo{Dir: absDir, IsBare: true}
-		if err := setupHook(repo, defaultHookOptions()); err != nil {
+		if err := setupHook(repo, hookOptions{
+			mainBranch:     mainBranch,
+			copyFiles:      copyFiles,
+			versionManager: versionManager,
+			packageManager: packageManager,
+		}); err != nil {
 			return err
 		}
 
@@ -226,6 +250,12 @@ func main() {
 	initCmd.Flags().StringP("package-manager", "p", "", "Package manager (pnpm, npm, or yarn)")
 	initCmd.Flags().Bool("no-copy", false, "Suppress default file copying")
 	initCmd.Flags().BoolP("force", "f", false, "Overwrite existing post-checkout hook")
+
+	cloneCmd.Flags().StringP("main", "m", "main", "Set the main branch name")
+	cloneCmd.Flags().StringSliceP("copy", "c", nil, "Files to copy to new worktrees (repeatable)")
+	cloneCmd.Flags().StringP("version-manager", "v", "", "Version manager (asdf or mise)")
+	cloneCmd.Flags().StringP("package-manager", "p", "", "Package manager (pnpm, npm, or yarn)")
+	cloneCmd.Flags().Bool("no-copy", false, "Suppress default file copying")
 
 	rootCmd.Version = resolveVersion()
 	rootCmd.AddCommand(addCmd)
