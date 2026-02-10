@@ -6,6 +6,7 @@ if [[ "$1" == "0000000000000000000000000000000000000000" ]]; then
     paths=({{range $i, $f := .CopyFiles}}{{if $i}} {{end}}"{{$f}}"{{end}})
 
     for path in "${paths[@]}"; do
+        mkdir -p "$(dirname "$(pwd)/$path")"
         cp "$basePath/$path" "$(pwd)/$path"
     done
 {{- end}}

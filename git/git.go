@@ -21,7 +21,7 @@ func NewRepo() (*Repo, error) {
 	cmd := exec.Command("git", "rev-parse", "--is-bare-repository")
 	cmd.Stdout = &buf
 	if err := cmd.Run(); err != nil {
-		return nil, errors.New("not in a git repository")
+		return nil, fmt.Errorf("not in a git repository: %w", err)
 	}
 	isBare := strings.TrimSpace(buf.String()) == "true"
 	buf.Reset()
@@ -72,8 +72,9 @@ func (r *Repo) Add(args []string) (string, error) {
 	cmd.Dir = r.Dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
-		return "", err
+		return "", fmt.Errorf("git worktree add failed: %w", err)
 	}
 
 	path := extractWorktreePath(args)
@@ -89,7 +90,7 @@ func (r *Repo) Add(args []string) (string, error) {
 // extractWorktreePath finds the <path> positional argument from git worktree add args.
 func extractWorktreePath(args []string) string {
 	valueFlags := map[string]bool{
-		"-b": true, "-B": true, "--reason": true,
+		"-b": true, "-B": true, "--reason": true, "--orphan": true,
 	}
 
 	skipNext := false

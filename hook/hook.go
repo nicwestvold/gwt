@@ -53,11 +53,11 @@ func Install(hooksDir string, data HookData, force bool) error {
 		return err
 	}
 
-	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create hooks directory: %w", err)
 	}
 
-	if err := os.WriteFile(hookPath, []byte(content), 0755); err != nil {
+	if err := os.WriteFile(hookPath, []byte(content), 0o755); err != nil {
 		return fmt.Errorf("failed to write hook: %w", err)
 	}
 

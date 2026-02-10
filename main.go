@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 
 	"github.com/nicwestvold/gwt/git"
@@ -90,7 +91,7 @@ func setupHook(repo *git.Repo, opts hookOptions) error {
 
 	var basePath string
 	if repo.IsBare {
-		basePath = repo.Dir + "/" + opts.mainBranch
+		basePath = filepath.Join(repo.Dir, opts.mainBranch)
 	} else {
 		basePath = repo.Dir
 	}
