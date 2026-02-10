@@ -43,6 +43,16 @@ func NewRepo() (*Repo, error) {
 		return nil, fmt.Errorf("failed to resolve repo path: %w", err)
 	}
 
+	// If .git in cwd is a file (gitdir pointer to a bare repo),
+	// use cwd as Dir so worktrees are created as siblings.
+	if isBare {
+		if info, statErr := os.Lstat(".git"); statErr == nil && !info.IsDir() {
+			if cwd, cwdErr := filepath.Abs("."); cwdErr == nil {
+				dir = cwd
+			}
+		}
+	}
+
 	return &Repo{Dir: dir, IsBare: isBare}, nil
 }
 
@@ -105,6 +115,66 @@ func extractWorktreePath(args []string) string {
 		return arg
 	}
 	return ""
+}
+
+func repoName(url string) string {
+	name := strings.TrimRight(url, "/")
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	if i := strings.LastIndex(name, ":"); i >= 0 {
+		name = name[i+1:]
+	}
+	name = strings.TrimSuffix(name, ".git")
+	return name
+}
+
+func Clone(url, dir string) (_ string, retErr error) {
+	if dir == "" {
+		dir = repoName(url)
+	}
+
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve path: %w", err)
+	}
+
+	if err := os.Mkdir(absDir, 0o755); err != nil {
+		return "", fmt.Errorf("failed to create directory: %w", err)
+	}
+	defer func() {
+		if retErr != nil {
+			os.RemoveAll(absDir)
+		}
+	}()
+
+	cloneCmd := exec.Command("git", "clone", "--bare", url, ".bare")
+	cloneCmd.Dir = absDir
+	cloneCmd.Stdout = os.Stdout
+	cloneCmd.Stderr = os.Stderr
+	if err := cloneCmd.Run(); err != nil {
+		return "", fmt.Errorf("git clone --bare failed: %w", err)
+	}
+
+	gitFile := filepath.Join(absDir, ".git")
+	if err := os.WriteFile(gitFile, []byte("gitdir: ./.bare\n"), 0o644); err != nil {
+		return "", fmt.Errorf("failed to write .git file: %w", err)
+	}
+
+	repo := &Repo{Dir: absDir, IsBare: true}
+	if err := repo.ConfigureFetch(); err != nil {
+		return "", fmt.Errorf("failed to configure fetch: %w", err)
+	}
+
+	fetchCmd := exec.Command("git", "fetch", "origin")
+	fetchCmd.Dir = absDir
+	fetchCmd.Stdout = os.Stdout
+	fetchCmd.Stderr = os.Stderr
+	if err := fetchCmd.Run(); err != nil {
+		return "", fmt.Errorf("git fetch failed: %w", err)
+	}
+
+	return absDir, nil
 }
 
 func ExitCode(err error) int {

@@ -2,6 +2,7 @@ package git
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"testing"
@@ -55,11 +56,36 @@ func TestExitCode(t *testing.T) {
 	}
 }
 
+func TestRepoName(t *testing.T) {
+	tests := []struct {
+		url  string
+		want string
+	}{
+		{"https://github.com/user/repo.git", "repo"},
+		{"https://github.com/user/repo", "repo"},
+		{"git@github.com:user/repo.git", "repo"},
+		{"git@github.com:repo.git", "repo"},
+		{"/path/to/repo.git", "repo"},
+		{"https://github.com/user/repo/", "repo"},
+		{"https://github.com/user/repo.git/", "repo"},
+		{"repo", "repo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			got := repoName(tt.url)
+			if got != tt.want {
+				t.Errorf("repoName(%q) = %q, want %q", tt.url, got, tt.want)
+			}
+		})
+	}
+}
+
 // exitState creates an *os.ProcessState with the given exit code by running a
 // subprocess that exits with that code.
 func exitState(t *testing.T, code int) *os.ProcessState {
 	t.Helper()
-	cmd := exec.Command("sh", "-c", "exit "+string(rune('0'+code)))
+	cmd := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code))
 	err := cmd.Run()
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {

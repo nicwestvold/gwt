@@ -59,10 +59,93 @@ Aliases:
   rm    remove
 
 Additional commands:
+  clone Clone a repo into a bare-repo worktree structure
   init  Generate a post-checkout hook for worktree setup
 
 Enhanced commands:
   add   Create a worktree (setup handled by post-checkout hook)`,
+}
+
+type hookOptions struct {
+	mainBranch     string
+	copyFiles      []string
+	versionManager string
+	packageManager string
+	force          bool
+}
+
+func defaultHookOptions() hookOptions {
+	return hookOptions{
+		mainBranch: "main",
+		copyFiles:  []string{".env"},
+	}
+}
+
+func setupHook(repo *git.Repo, opts hookOptions) error {
+	if repo.IsBare {
+		if err := repo.ConfigureFetch(); err != nil {
+			return fmt.Errorf("failed to configure fetch: %w", err)
+		}
+	}
+
+	var basePath string
+	if repo.IsBare {
+		basePath = repo.Dir + "/" + opts.mainBranch
+	} else {
+		basePath = repo.Dir
+	}
+
+	hooksDir, err := repo.HooksDir()
+	if err != nil {
+		return err
+	}
+
+	data := hook.HookData{
+		BasePath:       basePath,
+		CopyFiles:      opts.copyFiles,
+		VersionManager: opts.versionManager,
+		PackageManager: opts.packageManager,
+	}
+
+	if err := hook.Install(hooksDir, data, opts.force); err != nil {
+		return err
+	}
+
+	fmt.Printf("post-checkout hook installed: %s/post-checkout\n", hooksDir)
+	return nil
+}
+
+var cloneCmd = &cobra.Command{
+	Use:   "clone <repository> [<directory>]",
+	Short: "Clone a repo into a bare-repo worktree structure",
+	Long: `Clones a repository as a bare repo inside a .bare/ directory,
+creates a .git file pointing to it, configures fetch, and fetches all branches.
+
+The resulting directory is ready for 'gwt init' and 'gwt add'.`,
+	Args: cobra.RangeArgs(1, 2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		url := args[0]
+		var dir string
+		if len(args) > 1 {
+			dir = args[1]
+		}
+
+		absDir, err := git.Clone(url, dir)
+		if err != nil {
+			return err
+		}
+
+		repo := &git.Repo{Dir: absDir, IsBare: true}
+		if err := setupHook(repo, defaultHookOptions()); err != nil {
+			return err
+		}
+
+		fmt.Printf("Cloned into %s\n", absDir)
+		fmt.Println("Next steps:")
+		fmt.Println("  cd", absDir)
+		fmt.Println("  gwt add <branch>")
+		return nil
+	},
 }
 
 var addCmd = &cobra.Command{
@@ -105,12 +188,6 @@ var initCmd = &cobra.Command{
 			return err
 		}
 
-		if repo.IsBare {
-			if err := repo.ConfigureFetch(); err != nil {
-				return fmt.Errorf("failed to configure fetch: %w", err)
-			}
-		}
-
 		mainBranch, _ := cmd.Flags().GetString("main")
 		copyFiles, _ := cmd.Flags().GetStringSlice("copy")
 		noCopy, _ := cmd.Flags().GetBool("no-copy")
@@ -131,31 +208,13 @@ var initCmd = &cobra.Command{
 			return fmt.Errorf("invalid package manager %q: must be one of: pnpm, npm, yarn", packageManager)
 		}
 
-		var basePath string
-		if repo.IsBare {
-			basePath = repo.Dir + "/" + mainBranch
-		} else {
-			basePath = repo.Dir
-		}
-
-		hooksDir, err := repo.HooksDir()
-		if err != nil {
-			return err
-		}
-
-		data := hook.HookData{
-			BasePath:       basePath,
-			CopyFiles:      copyFiles,
-			VersionManager: versionManager,
-			PackageManager: packageManager,
-		}
-
-		if err := hook.Install(hooksDir, data, force); err != nil {
-			return err
-		}
-
-		fmt.Printf("post-checkout hook installed: %s/post-checkout\n", hooksDir)
-		return nil
+		return setupHook(repo, hookOptions{
+			mainBranch:     mainBranch,
+			copyFiles:      copyFiles,
+			versionManager: versionManager,
+			packageManager: packageManager,
+			force:          force,
+		})
 	},
 }
 
@@ -169,6 +228,7 @@ func main() {
 
 	rootCmd.Version = resolveVersion()
 	rootCmd.AddCommand(addCmd)
+	rootCmd.AddCommand(cloneCmd)
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(versionCmd)
 
@@ -183,7 +243,7 @@ func main() {
 		}
 
 		known := map[string]bool{
-			"init": true, "add": true, "version": true,
+			"init": true, "add": true, "clone": true, "version": true,
 			"help": true, "completion": true,
 			"--help": true, "-h": true, "--version": true,
 		}
