@@ -150,7 +150,9 @@ func Clone(url, dir string) (_ string, retErr error) {
 	}
 	defer func() {
 		if retErr != nil {
-			os.RemoveAll(absDir)
+			if rmErr := os.RemoveAll(absDir); rmErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to clean up %s: %v\n", absDir, rmErr)
+			}
 		}
 	}()
 

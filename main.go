@@ -162,6 +162,8 @@ The resulting directory is ready for 'gwt init' and 'gwt add'.`,
 			versionManager: versionManager,
 			packageManager: packageManager,
 		}); err != nil {
+			fmt.Fprintf(os.Stderr, "Clone succeeded, but hook setup failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "You can retry with: cd %s && gwt init\n", absDir)
 			return err
 		}
 
