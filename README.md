@@ -2,6 +2,16 @@
 
 A wrapper around `git worktree` that auto-copies files (`.env`, etc.) into new worktrees and fixes `git fetch` in bare repos.
 
+## tl;dr;
+
+You should probabaly just [use git hooks when creating worktrees](https://mskelton.dev/bytes/using-git-hooks-when-creating-worktrees).
+
+You still need to update your git config so that `git fetch` works properly.
+
+```
+git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
+```
+
 ## Install
 
 ```bash
