@@ -1,0 +1,57 @@
+#!/bin/bash
+
+if [[ "$1" == "0000000000000000000000000000000000000000" ]]; then
+{{- if .CopyFiles}}
+    basePath="{{.BasePath}}"
+    paths=({{range $i, $f := .CopyFiles}}{{if $i}} {{end}}"{{$f}}"{{end}})
+
+    for path in "${paths[@]}"; do
+        cp "$basePath/$path" "$(pwd)/$path"
+    done
+{{- end}}
+{{- if .PackageManager}}
+
+    (
+        set +e  # allow failures without killing the subshell
+{{- if eq .VersionManager "asdf"}}
+
+        export ASDF_DIR="${ASDF_DIR:-$HOME/.asdf}"
+        if [[ -f "$ASDF_DIR/asdf.sh" ]]; then
+            . "$ASDF_DIR/asdf.sh"
+        elif command -v brew &>/dev/null && [[ -f "$(brew --prefix asdf)/libexec/asdf.sh" ]]; then
+            . "$(brew --prefix asdf)/libexec/asdf.sh"
+        else
+            echo "warning: asdf not found, skipping project setup" >&2
+            exit 0
+        fi
+        corepack enable
+
+        if {{.PackageManager}} install; then
+            {{.BuildCommand}}
+        else
+            echo "{{.PackageManager}} install failed; skipping build"
+        fi
+{{- else if eq .VersionManager "mise"}}
+
+        if command -v mise &>/dev/null; then
+            mise exec -- corepack enable
+
+            if mise exec -- {{.PackageManager}} install; then
+                mise exec -- {{.BuildCommand}}
+            else
+                echo "{{.PackageManager}} install failed; skipping build"
+            fi
+        else
+            echo "warning: mise not found, skipping project setup" >&2
+        fi
+{{- else}}
+
+        if {{.PackageManager}} install; then
+            {{.BuildCommand}}
+        else
+            echo "{{.PackageManager}} install failed; skipping build"
+        fi
+{{- end}}
+    )
+{{- end}}
+fi

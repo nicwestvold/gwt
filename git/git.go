@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -116,6 +115,21 @@ func ExitCode(err error) int {
 	return 1
 }
 
+func (r *Repo) HooksDir() (string, error) {
+	var buf bytes.Buffer
+	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
+	cmd.Dir = r.Dir
+	cmd.Stdout = &buf
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to find git common dir: %w", err)
+	}
+	commonDir := strings.TrimSpace(buf.String())
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(r.Dir, commonDir)
+	}
+	return filepath.Join(commonDir, "hooks"), nil
+}
+
 func (r *Repo) ConfigureFetch() error {
 	var buf bytes.Buffer
 	cmd := exec.Command("git", "config", "remote.origin.fetch")
@@ -133,79 +147,3 @@ func (r *Repo) ConfigureFetch() error {
 	return cmd.Run()
 }
 
-func (r *Repo) WorktreePathForBranch(branch string) (string, error) {
-	var buf bytes.Buffer
-	cmd := exec.Command("git", "worktree", "list", "--porcelain")
-	cmd.Dir = r.Dir
-	cmd.Stdout = &buf
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to list worktrees: %w", err)
-	}
-
-	var currentPath string
-	for line := range strings.SplitSeq(buf.String(), "\n") {
-		if after, ok := strings.CutPrefix(line, "worktree "); ok {
-			currentPath = after
-		}
-		if after, ok := strings.CutPrefix(line, "branch refs/heads/"); ok {
-			if after == branch {
-				return currentPath, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("no worktree found for branch %q", branch)
-}
-
-func CopyFileToWorktree(srcDir, dstDir, filename string) (retErr error) {
-	srcPath := filepath.Join(srcDir, filename)
-	dstPath := filepath.Join(dstDir, filename)
-
-	srcAbs, err := filepath.Abs(srcPath)
-	if err != nil {
-		return fmt.Errorf("failed to resolve source path: %w", err)
-	}
-	if !strings.HasPrefix(srcAbs, srcDir+string(filepath.Separator)) && srcAbs != srcDir {
-		return fmt.Errorf("path %q escapes source directory", filename)
-	}
-
-	dstAbs, err := filepath.Abs(dstPath)
-	if err != nil {
-		return fmt.Errorf("failed to resolve destination path: %w", err)
-	}
-	if !strings.HasPrefix(dstAbs, dstDir+string(filepath.Separator)) && dstAbs != dstDir {
-		return fmt.Errorf("path %q escapes destination directory", filename)
-	}
-
-	srcFile, err := os.Open(srcPath)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := srcFile.Close(); err != nil && retErr == nil {
-			retErr = err
-		}
-	}()
-
-	info, err := srcFile.Stat()
-	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
-		return err
-	}
-
-	dstFile, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := dstFile.Close(); err != nil && retErr == nil {
-			retErr = err
-		}
-	}()
-
-	_, err = io.Copy(dstFile, srcFile)
-	return err
-}

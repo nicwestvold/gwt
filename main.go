@@ -5,8 +5,8 @@ import (
 	"os"
 	"runtime/debug"
 
-	"github.com/nicwestvold/gwt/config"
 	"github.com/nicwestvold/gwt/git"
+	"github.com/nicwestvold/gwt/hook"
 	"github.com/spf13/cobra"
 )
 
@@ -59,18 +59,19 @@ Aliases:
   rm    remove
 
 Additional commands:
-  init  Initialize gwt configuration (fetch config, file copy settings)
+  init  Generate a post-checkout hook for worktree setup
 
 Enhanced commands:
-  add   Create a worktree and copy configured files`,
+  add   Create a worktree (setup handled by post-checkout hook)`,
 }
 
 var addCmd = &cobra.Command{
 	Use:   "add [git worktree add flags] <path> [<commit-ish>]",
-	Short: "Create a worktree and copy configured files",
-	Long: `Wraps 'git worktree add' and copies configured files into the new worktree.
+	Short: "Create a worktree",
+	Long: `Wraps 'git worktree add' to create a new worktree.
 
-By default, .env is copied. Additional files can be configured via 'gwt init --copy'.
+File copying and project setup are handled by the post-checkout hook
+installed via 'gwt init'.
 
 All flags and arguments are passed directly to 'git worktree add'.
 Run 'git worktree add --help' for available options.`,
@@ -87,43 +88,17 @@ Run 'git worktree add --help' for available options.`,
 			return err
 		}
 
-		worktreePath, err := repo.Add(args)
-		if err != nil {
-			return err
-		}
-
-		if worktreePath == "" {
-			return nil
-		}
-
-		cfg, err := config.Load(repo.Dir)
-		if err != nil {
-			return err
-		}
-
-		if len(cfg.CopyFiles) == 0 {
-			return nil
-		}
-
-		mainPath, err := repo.WorktreePathForBranch(cfg.MainBranch)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: %v; skipping file copy\n", err)
-			return nil
-		}
-
-		for _, f := range cfg.CopyFiles {
-			if err := git.CopyFileToWorktree(mainPath, worktreePath, f); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: could not copy %s: %v\n", f, err)
-			}
-		}
-
-		return nil
+		_, err = repo.Add(args)
+		return err
 	},
 }
 
+var validVersionManagers = map[string]bool{"asdf": true, "mise": true}
+var validPackageManagers = map[string]bool{"pnpm": true, "npm": true, "yarn": true}
+
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Initialize gwt configuration for this repository",
+	Short: "Generate a post-checkout hook for worktree setup",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		repo, err := git.NewRepo()
 		if err != nil {
@@ -138,16 +113,48 @@ var initCmd = &cobra.Command{
 
 		mainBranch, _ := cmd.Flags().GetString("main")
 		copyFiles, _ := cmd.Flags().GetStringSlice("copy")
+		noCopy, _ := cmd.Flags().GetBool("no-copy")
+		versionManager, _ := cmd.Flags().GetString("version-manager")
+		packageManager, _ := cmd.Flags().GetString("package-manager")
+		force, _ := cmd.Flags().GetBool("force")
 
-		cfg := config.Config{
-			MainBranch: mainBranch,
-			CopyFiles:  copyFiles,
+		if noCopy {
+			copyFiles = nil
+		} else if !cmd.Flags().Changed("copy") {
+			copyFiles = []string{".env"}
 		}
 
-		if err := config.Save(repo.Dir, cfg); err != nil {
+		if versionManager != "" && !validVersionManagers[versionManager] {
+			return fmt.Errorf("invalid version manager %q: must be one of: asdf, mise", versionManager)
+		}
+		if packageManager != "" && !validPackageManagers[packageManager] {
+			return fmt.Errorf("invalid package manager %q: must be one of: pnpm, npm, yarn", packageManager)
+		}
+
+		var basePath string
+		if repo.IsBare {
+			basePath = repo.Dir + "/" + mainBranch
+		} else {
+			basePath = repo.Dir
+		}
+
+		hooksDir, err := repo.HooksDir()
+		if err != nil {
 			return err
 		}
 
+		data := hook.HookData{
+			BasePath:       basePath,
+			CopyFiles:      copyFiles,
+			VersionManager: versionManager,
+			PackageManager: packageManager,
+		}
+
+		if err := hook.Install(hooksDir, data, force); err != nil {
+			return err
+		}
+
+		fmt.Printf("post-checkout hook installed: %s/post-checkout\n", hooksDir)
 		return nil
 	},
 }
@@ -155,6 +162,10 @@ var initCmd = &cobra.Command{
 func main() {
 	initCmd.Flags().StringP("main", "m", "main", "Set the main branch name")
 	initCmd.Flags().StringSliceP("copy", "c", nil, "Files to copy to new worktrees (repeatable)")
+	initCmd.Flags().StringP("version-manager", "v", "", "Version manager (asdf or mise)")
+	initCmd.Flags().StringP("package-manager", "p", "", "Package manager (pnpm, npm, or yarn)")
+	initCmd.Flags().Bool("no-copy", false, "Suppress default file copying")
+	initCmd.Flags().BoolP("force", "f", false, "Overwrite existing post-checkout hook")
 
 	rootCmd.Version = resolveVersion()
 	rootCmd.AddCommand(addCmd)
