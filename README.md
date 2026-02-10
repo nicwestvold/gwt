@@ -21,7 +21,7 @@ go install github.com/nicwestvold/gwt@latest
 ## Quick Start
 
 ```bash
-git clone --bare git@github.com:you/your-repo.git your-repo
+gwt clone git@github.com:you/your-repo.git
 cd your-repo
 
 gwt init                           # generate hook (copies .env by default)
@@ -31,6 +31,18 @@ gwt add my-feature                 # post-checkout hook runs automatically
 
 ## Usage
 
+### Clone
+
+```bash
+gwt clone <repo>                         # bare-repo setup, no hook
+gwt clone <repo> --copy .env -p pnpm     # clone and create hook in one step
+gwt clone <repo> -m develop --no-copy    # clone with custom main branch, no file copying
+```
+
+Without init flags, run `gwt init` afterward to generate the post-checkout hook.
+
+### Init
+
 ```bash
 gwt init                                 # generate hook with default file copy (.env)
 gwt init -c .secret -c certs/dev.pem     # custom files to copy
@@ -38,7 +50,11 @@ gwt init --no-copy                       # no file copying
 gwt init -p pnpm -v mise                 # install deps + build via mise/pnpm
 gwt init --force                         # overwrite existing post-checkout hook
 gwt init --main develop                  # set main branch name
+```
 
+### Add / Pass-through
+
+```bash
 gwt add my-feature                       # create worktree (hook handles setup)
 
 gwt list                                 # pass-through to git worktree

@@ -122,7 +122,9 @@ var cloneCmd = &cobra.Command{
 	Long: `Clones a repository as a bare repo inside a .bare/ directory,
 creates a .git file pointing to it, configures fetch, and fetches all branches.
 
-The resulting directory is ready for 'gwt init' and 'gwt add'.`,
+If init flags (--main, --copy, --no-copy, --version-manager, --package-manager)
+are provided, a post-checkout hook is also created. Otherwise, run 'gwt init'
+afterward to generate the hook.`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		url := args[0]
@@ -155,21 +157,35 @@ The resulting directory is ready for 'gwt init' and 'gwt add'.`,
 			return fmt.Errorf("invalid package manager %q: must be one of: pnpm, npm, yarn", packageManager)
 		}
 
-		repo := &git.Repo{Dir: absDir, IsBare: true}
-		if err := setupHook(repo, hookOptions{
-			mainBranch:     mainBranch,
-			copyFiles:      copyFiles,
-			versionManager: versionManager,
-			packageManager: packageManager,
-		}); err != nil {
-			fmt.Fprintf(os.Stderr, "Clone succeeded, but hook setup failed: %v\n", err)
-			fmt.Fprintf(os.Stderr, "You can retry with: cd %s && gwt init\n", absDir)
-			return err
+		initFlags := []string{"main", "copy", "no-copy", "version-manager", "package-manager"}
+		wantHook := false
+		for _, f := range initFlags {
+			if cmd.Flags().Changed(f) {
+				wantHook = true
+				break
+			}
+		}
+
+		if wantHook {
+			repo := &git.Repo{Dir: absDir, IsBare: true}
+			if err := setupHook(repo, hookOptions{
+				mainBranch:     mainBranch,
+				copyFiles:      copyFiles,
+				versionManager: versionManager,
+				packageManager: packageManager,
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "Clone succeeded, but hook setup failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "You can retry with: cd %s && gwt init\n", absDir)
+				return err
+			}
 		}
 
 		fmt.Printf("Cloned into %s\n", absDir)
 		fmt.Println("Next steps:")
 		fmt.Println("  cd", absDir)
+		if !wantHook {
+			fmt.Println("  gwt init       # generate post-checkout hook")
+		}
 		fmt.Println("  gwt add <branch>")
 		return nil
 	},

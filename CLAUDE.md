@@ -22,7 +22,7 @@ go vet ./...             # Run static analysis
 - **`hook/`** — Hook generation. `HookData` struct + Go template produce a `post-checkout` shell script. Installed via `hook.Install()`.
 
 Key commands:
-- `gwt clone <repo> [<dir>]` — clone into a bare-repo worktree structure, configure fetch, and install post-checkout hook
+- `gwt clone <repo> [<dir>]` — clone into a bare-repo worktree structure and configure fetch. Only installs the post-checkout hook if init flags (`--main`, `--copy`, `--no-copy`, `--version-manager`, `--package-manager`) are explicitly provided; otherwise run `gwt init` afterward
 - `gwt init --main/-m <branch> --copy/-c <file> --no-copy` — generate a post-checkout hook (configures fetch in bare repos)
 - `gwt add [git worktree add flags] <path>` — create worktree (setup handled by post-checkout hook)
 - `gwt <anything else>` — passed directly to `git worktree`
