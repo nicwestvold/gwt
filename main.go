@@ -146,8 +146,6 @@ afterward to generate the hook.`,
 
 		if noCopy {
 			copyFiles = nil
-		} else if !cmd.Flags().Changed("copy") {
-			copyFiles = []string{".env"}
 		}
 
 		if versionManager != "" && !validVersionManagers[versionManager] {
