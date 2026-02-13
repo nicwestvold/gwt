@@ -60,8 +60,9 @@ Aliases:
   rm    remove
 
 Additional commands:
-  clone Clone a repo into a bare-repo worktree structure
-  init  Generate a post-checkout hook for worktree setup
+  clone      Clone a repo into a bare-repo worktree structure
+  init       Generate a post-checkout hook for worktree setup
+  shell-init Print shell integration for auto-cd
 
 Enhanced commands:
   add   Create a worktree (setup handled by post-checkout hook)`,
@@ -178,6 +179,8 @@ afterward to generate the hook.`,
 			}
 		}
 
+		git.WriteCdFile(absDir)
+
 		fmt.Printf("Cloned into %s\n", absDir)
 		fmt.Println("Next steps:")
 		fmt.Println("  cd", absDir)
@@ -212,10 +215,45 @@ Run 'git worktree add --help' for available options.`,
 			return err
 		}
 
-		_, err = repo.Add(args)
+		path, err := repo.Add(args)
+		if err == nil && path != "" {
+			git.WriteCdFile(path)
+		}
 		return err
 	},
 }
+
+var shellInitCmd = &cobra.Command{
+	Use:   "shell-init",
+	Short: "Print shell integration code for auto-cd",
+	Long: `Outputs a shell wrapper function that automatically cd's into newly
+created worktrees or cloned repos.
+
+Add to your shell profile:
+  eval "$(gwt shell-init)"`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Print(shellWrapper)
+		return nil
+	},
+}
+
+const shellWrapper = `gwt() {
+    if [ "${1}" = "add" ] || [ "${1}" = "clone" ]; then
+        local _gwt_cd_file
+        _gwt_cd_file=$(mktemp)
+        GWT_CD_FILE="$_gwt_cd_file" command gwt "$@"
+        local _gwt_exit=$?
+        if [ -s "$_gwt_cd_file" ]; then
+            builtin cd "$(cat "$_gwt_cd_file")" || true
+        fi
+        rm -f "$_gwt_cd_file"
+        return $_gwt_exit
+    else
+        command gwt "$@"
+    fi
+}
+`
 
 var validVersionManagers = map[string]bool{"asdf": true, "mise": true}
 var validPackageManagers = map[string]bool{"pnpm": true, "npm": true, "yarn": true}
@@ -278,6 +316,7 @@ func main() {
 	rootCmd.AddCommand(cloneCmd)
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(shellInitCmd)
 
 	// Check for pass-through before cobra runs
 	if len(os.Args) > 1 {
@@ -291,6 +330,7 @@ func main() {
 
 		known := map[string]bool{
 			"init": true, "add": true, "clone": true, "version": true,
+			"shell-init": true,
 			"help": true, "completion": true,
 			"--help": true, "-h": true, "--version": true,
 		}

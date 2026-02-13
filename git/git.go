@@ -196,6 +196,12 @@ func ExitCode(err error) int {
 	return 1
 }
 
+func WriteCdFile(path string) {
+	if cdFile := os.Getenv("GWT_CD_FILE"); cdFile != "" && path != "" {
+		os.WriteFile(cdFile, []byte(path), 0o644)
+	}
+}
+
 func (r *Repo) HooksDir() (string, error) {
 	var buf, stderr bytes.Buffer
 	cmd := exec.Command("git", "rev-parse", "--git-common-dir")

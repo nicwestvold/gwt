@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 )
 
@@ -80,6 +81,41 @@ func TestRepoName(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWriteCdFile(t *testing.T) {
+	t.Run("writes path when env var is set", func(t *testing.T) {
+		cdFile := filepath.Join(t.TempDir(), "cd-target")
+		t.Setenv("GWT_CD_FILE", cdFile)
+
+		WriteCdFile("/some/path")
+
+		data, err := os.ReadFile(cdFile)
+		if err != nil {
+			t.Fatalf("failed to read cd file: %v", err)
+		}
+		if string(data) != "/some/path" {
+			t.Errorf("cd file = %q, want %q", string(data), "/some/path")
+		}
+	})
+
+	t.Run("no-op when env var is unset", func(t *testing.T) {
+		t.Setenv("GWT_CD_FILE", "")
+
+		// Should not panic or create any file
+		WriteCdFile("/some/path")
+	})
+
+	t.Run("no-op when path is empty", func(t *testing.T) {
+		cdFile := filepath.Join(t.TempDir(), "cd-target")
+		t.Setenv("GWT_CD_FILE", cdFile)
+
+		WriteCdFile("")
+
+		if _, err := os.Stat(cdFile); err == nil {
+			t.Error("cd file should not exist when path is empty")
+		}
+	})
 }
 
 // exitState creates an *os.ProcessState with the given exit code by running a
