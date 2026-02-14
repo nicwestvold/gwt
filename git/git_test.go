@@ -9,29 +9,120 @@ import (
 	"testing"
 )
 
-func TestExtractWorktreePath(t *testing.T) {
+func TestBranchToDir(t *testing.T) {
 	tests := []struct {
-		name string
-		args []string
-		want string
+		branch string
+		want   string
 	}{
-		{"bare path", []string{"path"}, "path"},
-		{"-b flag", []string{"-b", "branch", "path"}, "path"},
-		{"-B flag", []string{"-B", "branch", "path"}, "path"},
-		{"--reason flag", []string{"--reason", "text", "path"}, "path"},
-		{"boolean + value flag combo", []string{"--track", "-b", "branch", "path"}, "path"},
-		{"-- separator", []string{"--", "path"}, "path"},
-		{"flags then -- separator", []string{"-b", "branch", "--", "path"}, "path"},
-		{"--orphan flag", []string{"--orphan", "branch", "path"}, "path"},
-		{"empty args", []string{}, ""},
-		{"no path just flags", []string{"-b", "branch"}, ""},
+		{"main", "main"},
+		{"fix/thing", "fix-thing"},
+		{"a/b/c/d", "a-b-c-d"},
+		{"no-slashes", "no-slashes"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.branch, func(t *testing.T) {
+			got := branchToDir(tt.branch)
+			if got != tt.want {
+				t.Errorf("branchToDir(%q) = %q, want %q", tt.branch, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildAddArgs(t *testing.T) {
+	repoDir := "/repo"
+
+	tests := []struct {
+		name     string
+		args     []string
+		wantArgs []string
+		wantPath string
+		wantErr  bool
+	}{
+		{
+			name:     "existing branch with slash",
+			args:     []string{"fix/thing"},
+			wantArgs: []string{"fix-thing", "fix/thing"},
+			wantPath: "/repo/fix-thing",
+		},
+		{
+			name:     "-b flag",
+			args:     []string{"-b", "feat/x"},
+			wantArgs: []string{"-b", "feat/x", "feat-x"},
+			wantPath: "/repo/feat-x",
+		},
+		{
+			name:     "-B flag",
+			args:     []string{"-B", "feat/x"},
+			wantArgs: []string{"-B", "feat/x", "feat-x"},
+			wantPath: "/repo/feat-x",
+		},
+		{
+			name:     "-b with start-point",
+			args:     []string{"-b", "feat/x", "origin/main"},
+			wantArgs: []string{"-b", "feat/x", "feat-x", "origin/main"},
+			wantPath: "/repo/feat-x",
+		},
+		{
+			name:     "boolean flag before -b",
+			args:     []string{"--track", "-b", "feat/x"},
+			wantArgs: []string{"--track", "-b", "feat/x", "feat-x"},
+			wantPath: "/repo/feat-x",
+		},
+		{
+			name:     "--reason value flag",
+			args:     []string{"--reason", "lock", "feat/x"},
+			wantArgs: []string{"--reason", "lock", "feat-x", "feat/x"},
+			wantPath: "/repo/feat-x",
+		},
+		{
+			name:     "simple branch no slash",
+			args:     []string{"develop"},
+			wantArgs: []string{"develop", "develop"},
+			wantPath: "/repo/develop",
+		},
+		{
+			name:     "deeply nested branch",
+			args:     []string{"a/b/c/d"},
+			wantArgs: []string{"a-b-c-d", "a/b/c/d"},
+			wantPath: "/repo/a-b-c-d",
+		},
+		{
+			name:     "--orphan flag",
+			args:     []string{"--orphan", "feat/x"},
+			wantArgs: []string{"--orphan", "feat/x", "feat-x"},
+			wantPath: "/repo/feat-x",
+		},
+		{
+			name:    "empty args",
+			args:    []string{},
+			wantErr: true,
+		},
+		{
+			name:    "-b with no value",
+			args:    []string{"-b"},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractWorktreePath(tt.args)
-			if got != tt.want {
-				t.Errorf("extractWorktreePath(%v) = %q, want %q", tt.args, got, tt.want)
+			gotArgs, gotPath, err := buildAddArgs(tt.args, repoDir)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("buildAddArgs(%v) expected error, got nil", tt.args)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("buildAddArgs(%v) unexpected error: %v", tt.args, err)
+			}
+			if gotPath != tt.wantPath {
+				t.Errorf("buildAddArgs(%v) path = %q, want %q", tt.args, gotPath, tt.wantPath)
+			}
+			if fmt.Sprintf("%v", gotArgs) != fmt.Sprintf("%v", tt.wantArgs) {
+				t.Errorf("buildAddArgs(%v) args = %v, want %v", tt.args, gotArgs, tt.wantArgs)
 			}
 		})
 	}

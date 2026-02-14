@@ -47,14 +47,28 @@ func NewRepo() (*Repo, error) {
 	}
 
 	// If .git in cwd is a file (gitdir pointer to a bare repo),
-	// use cwd as Dir so worktrees are created as siblings.
+	// resolve the repo root via git-common-dir (always points to .bare).
 	if isBare {
 		if info, statErr := os.Lstat(".git"); statErr == nil && !info.IsDir() {
-			cwd, cwdErr := filepath.Abs(".")
-			if cwdErr != nil {
-				return nil, fmt.Errorf("failed to resolve working directory: %w", cwdErr)
+			buf.Reset()
+			stderr.Reset()
+			cmd = exec.Command("git", "rev-parse", "--git-common-dir")
+			cmd.Stdout = &buf
+			cmd.Stderr = &stderr
+			if err := cmd.Run(); err != nil {
+				return nil, fmt.Errorf("failed to detect git common dir: %w (%s)", err, strings.TrimSpace(stderr.String()))
 			}
-			dir = cwd
+			commonDir, absErr := filepath.Abs(strings.TrimSpace(buf.String()))
+			if absErr != nil {
+				return nil, fmt.Errorf("failed to resolve git common dir: %w", absErr)
+			}
+			// gwt clone uses .bare/ as the bare repo dir; its parent is the project root.
+			// Standard bare repos use the repo dir directly.
+			if filepath.Base(commonDir) == ".bare" {
+				dir = filepath.Dir(commonDir)
+			} else {
+				dir = commonDir
+			}
 		}
 	}
 
@@ -72,8 +86,13 @@ func (r *Repo) Passthrough(args []string) error {
 }
 
 func (r *Repo) Add(args []string) (string, error) {
-	gitArgs := append([]string{"worktree", "add"}, args...)
-	cmd := exec.Command("git", gitArgs...)
+	gitArgs, worktreePath, err := buildAddArgs(args, r.Dir)
+	if err != nil {
+		return "", err
+	}
+
+	fullArgs := append([]string{"worktree", "add"}, gitArgs...)
+	cmd := exec.Command("git", fullArgs...)
 	cmd.Dir = r.Dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -81,46 +100,109 @@ func (r *Repo) Add(args []string) (string, error) {
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("git worktree add failed: %w", err)
 	}
-
-	path := extractWorktreePath(args)
-	if path == "" {
-		return "", nil
-	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(r.Dir, path)
-	}
-	return path, nil
+	return worktreePath, nil
 }
 
-// extractWorktreePath finds the <path> positional argument from git worktree add args.
-func extractWorktreePath(args []string) string {
-	valueFlags := map[string]bool{
-		"-b": true, "-B": true, "--reason": true, "--orphan": true,
+func branchToDir(branch string) string {
+	return strings.ReplaceAll(branch, "/", "-")
+}
+
+// buildAddArgs parses user args and returns transformed args for git worktree add
+// plus the derived worktree path.
+func buildAddArgs(args []string, repoDir string) (gitArgs []string, worktreePath string, err error) {
+	if len(args) == 0 {
+		return nil, "", fmt.Errorf("requires a branch name")
 	}
 
-	skipNext := false
+	valueFlags := map[string]bool{
+		"-b": true, "-B": true, "--orphan": true, "--reason": true,
+	}
+	branchFlags := map[string]bool{
+		"-b": true, "-B": true, "--orphan": true,
+	}
+
+	var flags []string
+	var positional []string
+	var branchFlag string
+	var branchValue string
 	pastFlags := false
-	for _, arg := range args {
-		if skipNext {
-			skipNext = false
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		if pastFlags {
+			positional = append(positional, arg)
 			continue
 		}
+
 		if arg == "--" {
 			pastFlags = true
 			continue
 		}
-		if !pastFlags {
-			if valueFlags[arg] {
-				skipNext = true
-				continue
+
+		// Handle --flag=value syntax
+		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "=") {
+			parts := strings.SplitN(arg, "=", 2)
+			if branchFlags[parts[0]] {
+				branchFlag = parts[0]
+				branchValue = parts[1]
 			}
-			if strings.HasPrefix(arg, "-") {
-				continue
-			}
+			flags = append(flags, arg)
+			continue
 		}
-		return arg
+
+		if valueFlags[arg] {
+			if i+1 >= len(args) {
+				return nil, "", fmt.Errorf("%s requires a value", arg)
+			}
+			if branchFlags[arg] {
+				branchFlag = arg
+				branchValue = args[i+1]
+			}
+			flags = append(flags, arg, args[i+1])
+			i++
+			continue
+		}
+
+		if strings.HasPrefix(arg, "-") {
+			flags = append(flags, arg)
+			continue
+		}
+
+		positional = append(positional, arg)
 	}
-	return ""
+
+	var branch string
+	if branchFlag != "" {
+		branch = branchValue
+		if len(positional) > 1 {
+			return nil, "", fmt.Errorf("too many positional arguments")
+		}
+	} else {
+		if len(positional) == 0 {
+			return nil, "", fmt.Errorf("requires a branch name")
+		}
+		if len(positional) > 1 {
+			return nil, "", fmt.Errorf("too many positional arguments")
+		}
+		branch = positional[0]
+	}
+
+	dir := branchToDir(branch)
+	worktreePath = filepath.Join(repoDir, dir)
+
+	if branchFlag != "" {
+		// flags... dir [start-point]
+		gitArgs = append(gitArgs, flags...)
+		gitArgs = append(gitArgs, dir)
+		gitArgs = append(gitArgs, positional...)
+	} else {
+		// flags... dir branch
+		gitArgs = append(gitArgs, flags...)
+		gitArgs = append(gitArgs, dir, branch)
+	}
+
+	return gitArgs, worktreePath, nil
 }
 
 func repoName(url string) string {

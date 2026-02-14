@@ -193,15 +193,22 @@ afterward to generate the hook.`,
 }
 
 var addCmd = &cobra.Command{
-	Use:   "add [git worktree add flags] <path> [<commit-ish>]",
+	Use:   "add [flags] <branch>",
 	Short: "Create a worktree",
-	Long: `Wraps 'git worktree add' to create a new worktree.
+	Long: `Create a new worktree for the given branch.
+
+The worktree directory is derived from the branch name by replacing
+'/' with '-'. For example, 'fix/login-bug' becomes 'fix-login-bug'.
+
+Use -b to create a new branch:
+  gwt add -b feat/new-feature
+  gwt add -b feat/new-feature origin/main   # with start-point
+
+Check out an existing branch:
+  gwt add fix/login-bug
 
 File copying and project setup are handled by the post-checkout hook
-installed via 'gwt init'.
-
-All flags and arguments are passed directly to 'git worktree add'.
-Run 'git worktree add --help' for available options.`,
+installed via 'gwt init'.`,
 	DisableFlagParsing: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		for _, a := range args {
