@@ -46,30 +46,33 @@ func NewRepo() (*Repo, error) {
 		return nil, fmt.Errorf("failed to resolve repo path: %w", err)
 	}
 
-	// If .git in cwd is a file (gitdir pointer to a bare repo),
-	// resolve the repo root via git-common-dir (always points to .bare).
-	if isBare {
-		if info, statErr := os.Lstat(".git"); statErr == nil && !info.IsDir() {
-			buf.Reset()
-			stderr.Reset()
-			cmd = exec.Command("git", "rev-parse", "--git-common-dir")
-			cmd.Stdout = &buf
-			cmd.Stderr = &stderr
-			if err := cmd.Run(); err != nil {
-				return nil, fmt.Errorf("failed to detect git common dir: %w (%s)", err, strings.TrimSpace(stderr.String()))
-			}
-			commonDir, absErr := filepath.Abs(strings.TrimSpace(buf.String()))
-			if absErr != nil {
-				return nil, fmt.Errorf("failed to resolve git common dir: %w", absErr)
-			}
-			// gwt clone uses .bare/ as the bare repo dir; its parent is the project root.
-			// Standard bare repos use the repo dir directly.
-			if filepath.Base(commonDir) == ".bare" {
-				dir = filepath.Dir(commonDir)
-			} else {
-				dir = commonDir
-			}
-		}
+	// Detect bare-repo worktree structure (e.g. gwt clone):
+	// Resolve the common dir and check if it's bare to find the project root.
+	// This works from any depth within a worktree, not just the worktree root.
+	buf.Reset()
+	stderr.Reset()
+	cmd = exec.Command("git", "rev-parse", "--git-common-dir")
+	cmd.Stdout = &buf
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("failed to detect git common dir: %w (%s)", err, strings.TrimSpace(stderr.String()))
+	}
+	commonDir, absErr := filepath.Abs(strings.TrimSpace(buf.String()))
+	if absErr != nil {
+		return nil, fmt.Errorf("failed to resolve git common dir: %w", absErr)
+	}
+
+	buf.Reset()
+	stderr.Reset()
+	cmd = exec.Command("git", "-C", commonDir, "rev-parse", "--is-bare-repository")
+	cmd.Stdout = &buf
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("failed to check bare status of common dir: %w (%s)", err, strings.TrimSpace(stderr.String()))
+	}
+	if strings.TrimSpace(buf.String()) == "true" {
+		dir = filepath.Dir(commonDir)
+		isBare = true
 	}
 
 	return &Repo{Dir: dir, IsBare: isBare}, nil

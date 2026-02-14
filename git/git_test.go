@@ -209,6 +209,197 @@ func TestWriteCdFile(t *testing.T) {
 	})
 }
 
+func TestNewRepo(t *testing.T) {
+	// Skip if git is not available.
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	// Build a gwt-style bare repo structure:
+	//   tmp/project/.bare/   (bare repo)
+	//   tmp/project/.git     (file: "gitdir: ./.bare\n")
+	//   tmp/project/main/    (worktree)
+	tmp := t.TempDir()
+	project := filepath.Join(tmp, "project")
+
+	// Create a source repo with one commit, then clone it bare.
+	sourceDir := filepath.Join(tmp, "source")
+	gitEnv := append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test")
+
+	run := func(name string, args ...string) {
+		t.Helper()
+		cmd := exec.Command(name, args...)
+		cmd.Env = gitEnv
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%s %v: %v", name, args, err)
+		}
+	}
+
+	run("git", "init", sourceDir)
+	run("git", "-C", sourceDir, "commit", "--allow-empty", "-m", "init")
+
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	run("git", "clone", "--bare", sourceDir, filepath.Join(project, ".bare"))
+
+	// Write .git file pointing to .bare (gwt convention)
+	if err := os.WriteFile(filepath.Join(project, ".git"), []byte("gitdir: ./.bare\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Resolve symlinks so comparisons work on macOS (/var -> /private/var).
+	project, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Add a worktree at project/main
+	worktreeDir := filepath.Join(project, "main")
+	run("git", "-C", project, "worktree", "add", worktreeDir)
+
+	t.Run("from project root", func(t *testing.T) {
+		origDir, _ := os.Getwd()
+		t.Cleanup(func() { os.Chdir(origDir) })
+
+		if err := os.Chdir(project); err != nil {
+			t.Fatal(err)
+		}
+
+		repo, err := NewRepo()
+		if err != nil {
+			t.Fatalf("NewRepo() error: %v", err)
+		}
+		if repo.Dir != project {
+			t.Errorf("Dir = %q, want %q", repo.Dir, project)
+		}
+		if !repo.IsBare {
+			t.Error("IsBare = false, want true")
+		}
+	})
+
+	t.Run("from inside worktree", func(t *testing.T) {
+		origDir, _ := os.Getwd()
+		t.Cleanup(func() { os.Chdir(origDir) })
+
+		if err := os.Chdir(worktreeDir); err != nil {
+			t.Fatal(err)
+		}
+
+		repo, err := NewRepo()
+		if err != nil {
+			t.Fatalf("NewRepo() error: %v", err)
+		}
+		if repo.Dir != project {
+			t.Errorf("Dir = %q, want %q", repo.Dir, project)
+		}
+		if !repo.IsBare {
+			t.Error("IsBare = false, want true")
+		}
+	})
+
+	t.Run("from nested worktree subdirectory", func(t *testing.T) {
+		origDir, _ := os.Getwd()
+		t.Cleanup(func() { os.Chdir(origDir) })
+
+		nestedDir := filepath.Join(worktreeDir, "sub", "deep")
+		if err := os.MkdirAll(nestedDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chdir(nestedDir); err != nil {
+			t.Fatal(err)
+		}
+
+		repo, err := NewRepo()
+		if err != nil {
+			t.Fatalf("NewRepo() error: %v", err)
+		}
+		if repo.Dir != project {
+			t.Errorf("Dir = %q, want %q", repo.Dir, project)
+		}
+		if !repo.IsBare {
+			t.Error("IsBare = false, want true")
+		}
+	})
+}
+
+func TestNewRepoNormalRepo(t *testing.T) {
+	// Skip if git is not available.
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	tmp := t.TempDir()
+	repoDir := filepath.Join(tmp, "normalrepo")
+
+	gitEnv := append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test")
+
+	run := func(name string, args ...string) {
+		t.Helper()
+		cmd := exec.Command(name, args...)
+		cmd.Env = gitEnv
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%s %v: %v", name, args, err)
+		}
+	}
+
+	run("git", "init", repoDir)
+	run("git", "-C", repoDir, "commit", "--allow-empty", "-m", "init")
+
+	// Resolve symlinks so comparisons work on macOS (/var -> /private/var).
+	repoDir, err := filepath.EvalSymlinks(repoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("from repo root", func(t *testing.T) {
+		origDir, _ := os.Getwd()
+		t.Cleanup(func() { os.Chdir(origDir) })
+
+		if err := os.Chdir(repoDir); err != nil {
+			t.Fatal(err)
+		}
+
+		repo, err := NewRepo()
+		if err != nil {
+			t.Fatalf("NewRepo() error: %v", err)
+		}
+		if repo.Dir != repoDir {
+			t.Errorf("Dir = %q, want %q", repo.Dir, repoDir)
+		}
+		if repo.IsBare {
+			t.Error("IsBare = true, want false")
+		}
+	})
+
+	t.Run("from subdirectory", func(t *testing.T) {
+		origDir, _ := os.Getwd()
+		t.Cleanup(func() { os.Chdir(origDir) })
+
+		subDir := filepath.Join(repoDir, "sub", "deep")
+		if err := os.MkdirAll(subDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chdir(subDir); err != nil {
+			t.Fatal(err)
+		}
+
+		repo, err := NewRepo()
+		if err != nil {
+			t.Fatalf("NewRepo() error: %v", err)
+		}
+		if repo.Dir != repoDir {
+			t.Errorf("Dir = %q, want %q", repo.Dir, repoDir)
+		}
+		if repo.IsBare {
+			t.Error("IsBare = true, want false")
+		}
+	})
+}
+
 // exitState creates an *os.ProcessState with the given exit code by running a
 // subprocess that exits with that code.
 func exitState(t *testing.T, code int) *os.ProcessState {
