@@ -1,16 +1,22 @@
 # gwt
 
-A wrapper around `git worktree` that auto-copies files (`.env`, etc.) into new worktrees and fixes `git fetch` in bare repos.
+A CLI tool that makes the git worktree workflow painless — clone, branch, and go.
 
-## tl;dr;
+## Why?
 
-You should probably just [use git hooks when creating worktrees](https://mskelton.dev/bytes/using-git-hooks-when-creating-worktrees).
+Working on multiple branches at once usually means stashing, switching, and waiting for dependency installs. Git worktrees solve this by giving each branch its own directory, but the bare-repo workflow has rough edges: environment files don't carry over, `git fetch` breaks, and you still have to manually install dependencies in every new worktree.
 
-You still need to update your git config so that `git fetch` works properly.
+`gwt` automates all of that. It sets up bare-repo clones correctly, generates a `post-checkout` hook that copies files and installs dependencies, and gets out of your way for everything else by passing commands straight through to `git worktree`.
 
-```
-git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
-```
+<details>
+<summary>What are git worktrees?</summary>
+
+Git worktrees let you check out multiple branches of the same repository into separate directories simultaneously. Instead of stashing your work and switching branches, you just `cd` into another directory. Each worktree shares the same git history, so there's no duplication — just parallel working copies.
+
+A common pattern is to use a **bare repo** as the central `.git` store, with each branch checked out as a sibling directory. This is the layout `gwt` creates and manages.
+
+Learn more: [git-worktree documentation](https://git-scm.com/docs/git-worktree)
+</details>
 
 ## Install
 
@@ -36,6 +42,22 @@ gwt init                                   # generate hook (copies .env by defau
 gwt add main                               # create worktree for main branch
 gwt add my-feature                         # post-checkout hook runs automatically
                                            # auto-cd's into worktree with shell integration
+```
+
+## How it works
+
+1. **`gwt clone`** clones a repository into a bare-repo structure
+2. **`gwt init`** generates a `post-checkout` hook (and fixes `git fetch` in bare repos)
+3. **`gwt add`** creates a worktree — git runs the hook automatically
+4. **The hook** copies files (`.env`, etc.), installs dependencies, and runs builds
+
+```
+your-repo/
+├── .bare/            # the bare git repo
+├── .git              # file pointing to .bare/
+├── main/             # worktree for main branch
+├── my-feature/       # worktree for feature branch
+└── fix-login-bug/    # worktree (slashes become hyphens)
 ```
 
 ## Usage
@@ -82,3 +104,19 @@ gwt remove my-feature                    # pass-through to git worktree
 ```
 
 Aliases: `ls` → `list`, `rm` → `remove`. Any unrecognized command is passed directly to `git worktree`.
+
+### Version
+
+```bash
+gwt version
+```
+
+## Requirements
+
+- **Go 1.25+** (for `go install`)
+- **Git**
+- **bash or zsh** (for shell integration and hook execution)
+
+## License
+
+[MIT](LICENSE)
