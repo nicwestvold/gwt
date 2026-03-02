@@ -400,6 +400,98 @@ func TestNewRepoNormalRepo(t *testing.T) {
 	})
 }
 
+func TestAdd(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	tmp := t.TempDir()
+	sourceDir := filepath.Join(tmp, "source")
+	project := filepath.Join(tmp, "project")
+
+	gitEnv := append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test")
+
+	run := func(name string, args ...string) {
+		t.Helper()
+		cmd := exec.Command(name, args...)
+		cmd.Env = gitEnv
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%s %v: %v", name, args, err)
+		}
+	}
+
+	// Create source repo with initial commit on main
+	run("git", "init", "-b", "main", sourceDir)
+	run("git", "-C", sourceDir, "commit", "--allow-empty", "-m", "init")
+
+	// Clone bare into project/.bare and write .git file
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run("git", "clone", "--bare", sourceDir, filepath.Join(project, ".bare"))
+	if err := os.WriteFile(filepath.Join(project, ".git"), []byte("gitdir: ./.bare\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Resolve symlinks for macOS (/var -> /private/var)
+	project, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceDir, err = filepath.EvalSymlinks(sourceDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repo := &Repo{Dir: project, IsBare: true}
+
+	// Configure fetch refspec and do initial fetch so origin/main is known
+	if err := repo.ConfigureFetch(); err != nil {
+		t.Fatalf("ConfigureFetch: %v", err)
+	}
+	run("git", "-C", project, "fetch", "origin")
+
+	t.Run("success on first attempt", func(t *testing.T) {
+		got, err := repo.Add([]string{"main"})
+		if err != nil {
+			t.Fatalf("Add([\"main\"]) unexpected error: %v", err)
+		}
+		want := filepath.Join(project, "main")
+		if got != want {
+			t.Errorf("Add([\"main\"]) = %q, want %q", got, want)
+		}
+		if _, err := os.Stat(want); err != nil {
+			t.Errorf("worktree directory does not exist: %v", err)
+		}
+	})
+
+	t.Run("auto-fetch on invalid reference", func(t *testing.T) {
+		// Create a new branch on source that the bare repo doesn't know about yet
+		run("git", "-C", sourceDir, "checkout", "-b", "new-feature")
+		run("git", "-C", sourceDir, "commit", "--allow-empty", "-m", "new feature")
+
+		got, err := repo.Add([]string{"new-feature"})
+		if err != nil {
+			t.Fatalf("Add([\"new-feature\"]) unexpected error: %v", err)
+		}
+		want := filepath.Join(project, "new-feature")
+		if got != want {
+			t.Errorf("Add([\"new-feature\"]) = %q, want %q", got, want)
+		}
+		if _, err := os.Stat(want); err != nil {
+			t.Errorf("worktree directory does not exist: %v", err)
+		}
+	})
+
+	t.Run("fails cleanly for nonexistent branch", func(t *testing.T) {
+		_, err := repo.Add([]string{"totally-fake"})
+		if err == nil {
+			t.Fatal("Add([\"totally-fake\"]) expected error, got nil")
+		}
+	})
+}
+
 // exitState creates an *os.ProcessState with the given exit code by running a
 // subprocess that exits with that code.
 func exitState(t *testing.T, code int) *os.ProcessState {

@@ -95,12 +95,37 @@ func (r *Repo) Add(args []string) (string, error) {
 	}
 
 	fullArgs := append([]string{"worktree", "add"}, gitArgs...)
+
+	// First attempt: capture stderr to detect "invalid reference"
+	var stderrBuf bytes.Buffer
 	cmd := exec.Command("git", fullArgs...)
 	cmd.Dir = r.Dir
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = &stderrBuf
 	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
+		if strings.Contains(stderrBuf.String(), "invalid reference:") {
+			// Branch not fetched yet — fetch and retry
+			fetchCmd := exec.Command("git", "fetch", "origin")
+			fetchCmd.Dir = r.Dir
+			fetchCmd.Stdout = os.Stdout
+			fetchCmd.Stderr = os.Stderr
+			if fetchErr := fetchCmd.Run(); fetchErr != nil {
+				return "", fmt.Errorf("git fetch failed: %w", fetchErr)
+			}
+			// Retry with normal stderr passthrough
+			retryCmd := exec.Command("git", fullArgs...)
+			retryCmd.Dir = r.Dir
+			retryCmd.Stdout = os.Stdout
+			retryCmd.Stderr = os.Stderr
+			retryCmd.Stdin = os.Stdin
+			if retryErr := retryCmd.Run(); retryErr != nil {
+				return "", fmt.Errorf("git worktree add failed: %w", retryErr)
+			}
+			return worktreePath, nil
+		}
+		// Other error — flush captured stderr so user sees it
+		os.Stderr.Write(stderrBuf.Bytes())
 		return "", fmt.Errorf("git worktree add failed: %w", err)
 	}
 	return worktreePath, nil
