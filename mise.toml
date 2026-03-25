@@ -26,6 +26,7 @@ run = "go test -coverprofile=coverage.out ./... && go tool cover -html=coverage.
 
 [tasks.install]
 description = "Install gwt binary"
+env = { GOBIN = "{{env.HOME}}/.local/bin" }
 run = '''
 #!/usr/bin/env bash
 set -e
