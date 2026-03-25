@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 
+	"github.com/nicwestvold/gwt/config"
 	"github.com/nicwestvold/gwt/git"
 	"github.com/nicwestvold/gwt/hook"
 	"github.com/spf13/cobra"
@@ -15,7 +17,6 @@ var version = "dev"
 
 var aliases = map[string]string{
 	"ls": "list",
-	"rm": "remove",
 }
 
 func resolveVersion() string {
@@ -51,7 +52,6 @@ Pass-through commands:
   lock    Lock a worktree
   move    Move a worktree
   prune   Prune stale worktree information
-  remove  Remove a worktree
   repair  Repair worktree administrative files
   unlock  Unlock a worktree
 
@@ -65,7 +65,8 @@ Additional commands:
   shell-init Print shell integration for auto-cd
 
 Enhanced commands:
-  add   Create a worktree (setup handled by post-checkout hook)`,
+  add     Create a worktree (setup handled by post-checkout hook)
+  remove  Remove a worktree (auto-cd back, cleanup empty dirs)`,
 }
 
 type hookOptions struct {
@@ -156,6 +157,18 @@ afterward to generate the hook.`,
 			return fmt.Errorf("invalid package manager %q: must be one of: pnpm, npm, yarn", packageManager)
 		}
 
+		repo := &git.Repo{Dir: absDir, IsBare: true}
+		opts := hookOptions{
+			mainBranch:     mainBranch,
+			copyFiles:      copyFiles,
+			versionManager: versionManager,
+			packageManager: packageManager,
+		}
+
+		if regErr := registerRepo(repo, opts); regErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to register repo in config: %v\n", regErr)
+		}
+
 		initFlags := []string{"main", "copy", "no-copy", "version-manager", "package-manager"}
 		wantHook := false
 		for _, f := range initFlags {
@@ -166,13 +179,7 @@ afterward to generate the hook.`,
 		}
 
 		if wantHook {
-			repo := &git.Repo{Dir: absDir, IsBare: true}
-			if err := setupHook(repo, hookOptions{
-				mainBranch:     mainBranch,
-				copyFiles:      copyFiles,
-				versionManager: versionManager,
-				packageManager: packageManager,
-			}); err != nil {
+			if err := setupHook(repo, opts); err != nil {
 				fmt.Fprintf(os.Stderr, "Clone succeeded, but hook setup failed: %v\n", err)
 				fmt.Fprintf(os.Stderr, "You can retry with: cd %s && gwt init\n", absDir)
 				return err
@@ -230,6 +237,45 @@ installed via 'gwt init'.`,
 	},
 }
 
+var removeCmd = &cobra.Command{
+	Use:     "remove [flags] [<worktree>]",
+	Aliases: []string{"rm"},
+	Short:   "Remove a worktree",
+	Long: `Remove a worktree. If no path is given, removes the current worktree.
+
+After removal, the shell wrapper (from 'gwt shell-init') will cd back
+to the repository root.
+
+Supports all git worktree remove flags (e.g., --force).`,
+	DisableFlagParsing: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		for _, a := range args {
+			if a == "--help" || a == "-h" {
+				return cmd.Help()
+			}
+		}
+
+		repo, err := git.NewRepo()
+		if err != nil {
+			return err
+		}
+
+		repoDir, worktreePath, err := repo.Remove(args)
+		if err != nil {
+			return err
+		}
+
+		// Clean up empty parent dirs for centralized worktrees.
+		worktreeRoot := filepath.Join(config.DataDir(), "worktrees")
+		if strings.HasPrefix(worktreePath, worktreeRoot+string(filepath.Separator)) {
+			git.CleanEmptyParents(worktreePath, worktreeRoot)
+		}
+
+		git.WriteCdFile(repoDir)
+		return nil
+	},
+}
+
 var shellInitCmd = &cobra.Command{
 	Use:   "shell-init",
 	Short: "Print shell integration code for auto-cd",
@@ -246,7 +292,7 @@ Add to your shell profile:
 }
 
 const shellWrapper = `gwt() {
-    if [ "${1}" = "add" ] || [ "${1}" = "clone" ]; then
+    if [ "${1}" = "add" ] || [ "${1}" = "clone" ] || [ "${1}" = "rm" ] || [ "${1}" = "remove" ]; then
         local _gwt_cd_file
         _gwt_cd_file=$(mktemp)
         GWT_CD_FILE="$_gwt_cd_file" command gwt "$@"
@@ -294,14 +340,51 @@ var initCmd = &cobra.Command{
 			return fmt.Errorf("invalid package manager %q: must be one of: pnpm, npm, yarn", packageManager)
 		}
 
-		return setupHook(repo, hookOptions{
+		opts := hookOptions{
 			mainBranch:     mainBranch,
 			copyFiles:      copyFiles,
 			versionManager: versionManager,
 			packageManager: packageManager,
 			force:          force,
-		})
+		}
+
+		if !repo.IsBare {
+			if err := registerRepo(repo, opts); err != nil {
+				return err
+			}
+		}
+
+		return setupHook(repo, opts)
 	},
+}
+
+func registerRepo(repo *git.Repo, opts hookOptions) error {
+	name, err := repo.CanonicalName()
+	if err != nil {
+		return fmt.Errorf("failed to determine repo name: %w", err)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	entry := config.RepoEntry{
+		Path:           repo.Dir,
+		Bare:           repo.IsBare,
+		PackageManager: opts.packageManager,
+		VersionManager: opts.versionManager,
+		CopyFiles:      opts.copyFiles,
+		MainBranch:     opts.mainBranch,
+	}
+	cfg.Register(name, entry)
+
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Printf("Registered %s in %s\n", name, config.Path())
+	return nil
 }
 
 func main() {
@@ -322,6 +405,7 @@ func main() {
 	rootCmd.AddCommand(addCmd)
 	rootCmd.AddCommand(cloneCmd)
 	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(removeCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(shellInitCmd)
 
@@ -336,8 +420,8 @@ func main() {
 		}
 
 		known := map[string]bool{
-			"init": true, "add": true, "clone": true, "version": true,
-			"shell-init": true,
+			"init": true, "add": true, "clone": true, "remove": true, "rm": true,
+			"version": true, "shell-init": true,
 			"help": true, "completion": true,
 			"--help": true, "-h": true, "--version": true,
 		}

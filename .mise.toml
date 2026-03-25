@@ -1,0 +1,114 @@
+[tools]
+go = "1.25"
+golangci-lint = "latest"
+goreleaser = "latest"
+
+[tasks.build]
+description = "Build gwt binary (snapshot)"
+run = "goreleaser build --snapshot --clean --single-target"
+
+[tasks.test]
+description = "Run tests"
+run = "go test ./..."
+
+[tasks.lint]
+description = "Run linter"
+run = "golangci-lint run"
+
+[tasks.check]
+description = "Full validation: lint + test + tidy"
+depends = ["lint", "test"]
+run = "go mod tidy"
+
+[tasks.coverage]
+description = "Generate coverage report"
+run = "go test -coverprofile=coverage.out ./... && go tool cover -html=coverage.out"
+
+[tasks.install]
+description = "Install gwt binary"
+run = '''
+#!/usr/bin/env bash
+set -e
+VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+go install -ldflags "-X main.version=$VERSION" .
+'''
+
+[tasks.release]
+description = "Interactive release: prompt for version, generate AI notes, tag and push"
+run = '''
+#!/usr/bin/env bash
+set -e
+
+# Fetch latest tags
+git fetch --tags --quiet
+
+# Get current latest tag
+CURRENT_TAG=$(git tag --sort=-version:refname | head -1)
+if [[ -z "$CURRENT_TAG" ]]; then
+  CURRENT_TAG="v0.0.0"
+fi
+CURRENT_VER="${CURRENT_TAG#v}"
+
+# Suggest patch bump
+IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VER"
+NEXT_VER="$MAJOR.$MINOR.$((PATCH + 1))"
+
+# Prompt for version
+echo -e "\033[2mCurrent release:  $CURRENT_TAG\033[0m"
+printf "\033[1mNext version [$NEXT_VER]: \033[0m"
+read -r INPUT_VER
+VERSION="${INPUT_VER:-$NEXT_VER}"
+TAG="v$VERSION"
+
+# Sanity check: tag must not already exist
+if git rev-parse "$TAG" &>/dev/null; then
+  echo "Error: tag $TAG already exists." >&2
+  exit 1
+fi
+
+# Generate release notes
+echo ""
+echo "Generating release notes..."
+CHANGES=$(git log "${CURRENT_TAG}..HEAD" --oneline 2>/dev/null)
+if [[ -z "$CHANGES" ]]; then
+  CHANGES="No commits since $CURRENT_TAG."
+fi
+
+if command -v claude &>/dev/null; then
+  AI_NOTES=$(printf '%s\n\nWrite a concise GitHub release note (2-5 bullets, plain text, no headers, no markdown). Each bullet starts with •.' "$CHANGES" | claude --print 2>/dev/null || echo "$CHANGES")
+else
+  AI_NOTES="$CHANGES"
+fi
+
+# Open editor for review/edit
+NOTES_FILE=$(mktemp /tmp/gwt-release-notes.XXXXXX)
+echo "$AI_NOTES" > "$NOTES_FILE"
+${EDITOR:-vi} "$NOTES_FILE"
+NOTES=$(cat "$NOTES_FILE")
+rm -f "$NOTES_FILE"
+
+if [[ -z "$NOTES" ]]; then
+  echo "Error: release notes are empty. Aborting." >&2
+  exit 1
+fi
+
+# Confirm
+echo ""
+echo "Ready to release:"
+echo "  Tag:    $TAG"
+echo "  Notes:"
+echo "$NOTES" | head -3 | sed 's/^/          /'
+echo ""
+printf "\033[1mProceed? [y/N]: \033[0m"
+read -r CONFIRM
+if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
+  echo "Aborted."
+  exit 0
+fi
+
+# Tag and push
+git tag -a "$TAG" -m "$NOTES"
+git push origin "$TAG"
+echo ""
+echo "Tag $TAG pushed — CI will handle the release."
+'''

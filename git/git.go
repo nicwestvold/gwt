@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/nicwestvold/gwt/config"
 )
 
 type Repo struct {
@@ -88,8 +90,122 @@ func (r *Repo) Passthrough(args []string) error {
 	return cmd.Run()
 }
 
+// Remove removes a worktree. If no positional path argument is provided,
+// it auto-detects the current worktree directory. Returns the repo dir
+// (for cd-back) and the removed worktree path (for cleanup).
+func (r *Repo) Remove(args []string) (repoDir, worktreePath string, err error) {
+	// Separate flags from positional args to detect if a path was given.
+	var flags []string
+	var positional []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			flags = append(flags, a)
+		} else {
+			positional = append(positional, a)
+		}
+	}
+
+	if len(positional) == 0 {
+		// Auto-detect current worktree.
+		var buf, stderr bytes.Buffer
+		cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+		cmd.Stdout = &buf
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			return "", "", fmt.Errorf("not inside a worktree: %w (%s)", err, strings.TrimSpace(stderr.String()))
+		}
+		worktreePath = strings.TrimSpace(buf.String())
+		positional = append(positional, worktreePath)
+	} else {
+		// Resolve the provided path to absolute.
+		worktreePath, err = filepath.Abs(positional[0])
+		if err != nil {
+			return "", "", fmt.Errorf("failed to resolve path: %w", err)
+		}
+		positional[0] = worktreePath
+	}
+
+	gitArgs := []string{"worktree", "remove"}
+	gitArgs = append(gitArgs, flags...)
+	gitArgs = append(gitArgs, positional...)
+
+	cmd := exec.Command("git", gitArgs...)
+	cmd.Dir = r.Dir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Run(); err != nil {
+		return "", "", fmt.Errorf("git worktree remove failed: %w", err)
+	}
+
+	return r.Dir, worktreePath, nil
+}
+
+// CleanEmptyParents removes empty directories walking up from dir,
+// stopping before removing stopAt or anything above it.
+func CleanEmptyParents(dir, stopAt string) {
+	dir = filepath.Clean(dir)
+	stopAt = filepath.Clean(stopAt)
+	for dir != stopAt && strings.HasPrefix(dir, stopAt+string(filepath.Separator)) {
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) > 0 {
+			return
+		}
+		os.Remove(dir)
+		dir = filepath.Dir(dir)
+	}
+}
+
+// WorktreeBaseDir returns the parent directory for new worktrees.
+// For bare repos, this is r.Dir. For regular repos, this is
+// ~/.local/share/gwt/worktrees/<owner>/<repo>.
+func (r *Repo) WorktreeBaseDir() (string, error) {
+	if r.IsBare {
+		return r.Dir, nil
+	}
+	name, err := r.CanonicalName()
+	if err != nil {
+		return "", fmt.Errorf("failed to determine canonical repo name: %w", err)
+	}
+	return filepath.Join(config.DataDir(), "worktrees", name), nil
+}
+
+// autoRegister adds this repo to the gwt config if not already present.
+func (r *Repo) autoRegister() error {
+	name, err := r.CanonicalName()
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	if _, ok := cfg.Lookup(name); ok {
+		return nil
+	}
+	cfg.Register(name, config.RepoEntry{Path: r.Dir})
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+	return nil
+}
+
 func (r *Repo) Add(args []string) (string, error) {
-	gitArgs, worktreePath, err := buildAddArgs(args, r.Dir)
+	baseDir, err := r.WorktreeBaseDir()
+	if err != nil {
+		return "", err
+	}
+
+	if !r.IsBare {
+		if err := os.MkdirAll(baseDir, 0o755); err != nil {
+			return "", fmt.Errorf("failed to create worktree directory: %w", err)
+		}
+		if err := r.autoRegister(); err != nil {
+			return "", err
+		}
+	}
+
+	gitArgs, worktreePath, err := buildAddArgs(args, baseDir)
 	if err != nil {
 		return "", err
 	}
@@ -220,14 +336,14 @@ func buildAddArgs(args []string, repoDir string) (gitArgs []string, worktreePath
 	worktreePath = filepath.Join(repoDir, dir)
 
 	if branchFlag != "" {
-		// flags... dir [start-point]
+		// flags... worktreePath [start-point]
 		gitArgs = append(gitArgs, flags...)
-		gitArgs = append(gitArgs, dir)
+		gitArgs = append(gitArgs, worktreePath)
 		gitArgs = append(gitArgs, positional...)
 	} else {
-		// flags... dir branch
+		// flags... worktreePath branch
 		gitArgs = append(gitArgs, flags...)
-		gitArgs = append(gitArgs, dir, branch)
+		gitArgs = append(gitArgs, worktreePath, branch)
 	}
 
 	return gitArgs, worktreePath, nil

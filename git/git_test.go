@@ -43,55 +43,55 @@ func TestBuildAddArgs(t *testing.T) {
 		{
 			name:     "existing branch with slash",
 			args:     []string{"fix/thing"},
-			wantArgs: []string{"fix-thing", "fix/thing"},
+			wantArgs: []string{"/repo/fix-thing", "fix/thing"},
 			wantPath: "/repo/fix-thing",
 		},
 		{
 			name:     "-b flag",
 			args:     []string{"-b", "feat/x"},
-			wantArgs: []string{"-b", "feat/x", "feat-x"},
+			wantArgs: []string{"-b", "feat/x", "/repo/feat-x"},
 			wantPath: "/repo/feat-x",
 		},
 		{
 			name:     "-B flag",
 			args:     []string{"-B", "feat/x"},
-			wantArgs: []string{"-B", "feat/x", "feat-x"},
+			wantArgs: []string{"-B", "feat/x", "/repo/feat-x"},
 			wantPath: "/repo/feat-x",
 		},
 		{
 			name:     "-b with start-point",
 			args:     []string{"-b", "feat/x", "origin/main"},
-			wantArgs: []string{"-b", "feat/x", "feat-x", "origin/main"},
+			wantArgs: []string{"-b", "feat/x", "/repo/feat-x", "origin/main"},
 			wantPath: "/repo/feat-x",
 		},
 		{
 			name:     "boolean flag before -b",
 			args:     []string{"--track", "-b", "feat/x"},
-			wantArgs: []string{"--track", "-b", "feat/x", "feat-x"},
+			wantArgs: []string{"--track", "-b", "feat/x", "/repo/feat-x"},
 			wantPath: "/repo/feat-x",
 		},
 		{
 			name:     "--reason value flag",
 			args:     []string{"--reason", "lock", "feat/x"},
-			wantArgs: []string{"--reason", "lock", "feat-x", "feat/x"},
+			wantArgs: []string{"--reason", "lock", "/repo/feat-x", "feat/x"},
 			wantPath: "/repo/feat-x",
 		},
 		{
 			name:     "simple branch no slash",
 			args:     []string{"develop"},
-			wantArgs: []string{"develop", "develop"},
+			wantArgs: []string{"/repo/develop", "develop"},
 			wantPath: "/repo/develop",
 		},
 		{
 			name:     "deeply nested branch",
 			args:     []string{"a/b/c/d"},
-			wantArgs: []string{"a-b-c-d", "a/b/c/d"},
+			wantArgs: []string{"/repo/a-b-c-d", "a/b/c/d"},
 			wantPath: "/repo/a-b-c-d",
 		},
 		{
 			name:     "--orphan flag",
 			args:     []string{"--orphan", "feat/x"},
-			wantArgs: []string{"--orphan", "feat/x", "feat-x"},
+			wantArgs: []string{"--orphan", "feat/x", "/repo/feat-x"},
 			wantPath: "/repo/feat-x",
 		},
 		{
@@ -488,6 +488,50 @@ func TestAdd(t *testing.T) {
 		_, err := repo.Add([]string{"totally-fake"})
 		if err == nil {
 			t.Fatal("Add([\"totally-fake\"]) expected error, got nil")
+		}
+	})
+}
+
+func TestCleanEmptyParents(t *testing.T) {
+	tmp := t.TempDir()
+	stopAt := filepath.Join(tmp, "worktrees")
+	deep := filepath.Join(stopAt, "owner", "repo", "feat-x")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("removes empty dirs up to stopAt", func(t *testing.T) {
+		CleanEmptyParents(deep, stopAt)
+
+		// deep, repo, and owner should all be gone (empty)
+		if _, err := os.Stat(filepath.Join(stopAt, "owner")); !os.IsNotExist(err) {
+			t.Error("owner dir should be removed")
+		}
+		// stopAt itself should remain
+		if _, err := os.Stat(stopAt); err != nil {
+			t.Error("stopAt dir should still exist")
+		}
+	})
+
+	t.Run("stops at non-empty dir", func(t *testing.T) {
+		repoDir := filepath.Join(stopAt, "owner", "repo")
+		wt1 := filepath.Join(repoDir, "feat-a")
+		wt2 := filepath.Join(repoDir, "feat-b")
+		if err := os.MkdirAll(wt1, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(wt2, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		// Remove wt1 — wt2 still exists so repo/ and owner/ should stay
+		CleanEmptyParents(wt1, stopAt)
+
+		if _, err := os.Stat(repoDir); err != nil {
+			t.Error("repo dir should still exist (has wt2)")
+		}
+		if _, err := os.Stat(wt2); err != nil {
+			t.Error("wt2 should still exist")
 		}
 	})
 }
