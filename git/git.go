@@ -130,8 +130,18 @@ func (r *Repo) Remove(args []string) (repoDir, worktreePath string, err error) {
 		}
 	}
 
+	// Resolve symlinks so the guard comparison works on systems
+	// where paths diverge (e.g. macOS /var -> /private/var).
+	if resolved, err := filepath.EvalSymlinks(worktreePath); err == nil {
+		worktreePath = resolved
+	}
+
 	// Guard against removing the main working tree.
-	if filepath.Clean(worktreePath) == filepath.Clean(r.Dir) {
+	resolvedDir := r.Dir
+	if resolved, err := filepath.EvalSymlinks(r.Dir); err == nil {
+		resolvedDir = resolved
+	}
+	if filepath.Clean(worktreePath) == filepath.Clean(resolvedDir) {
 		return "", "", fmt.Errorf("refusing to remove the main working tree: %s", worktreePath)
 	}
 
