@@ -115,5 +115,5 @@ echo "Tag $TAG pushed. Running goreleaser..."
 echo ""
 
 # Build and publish GitHub release
-goreleaser release --clean --release-notes <(echo "$NOTES")
+GITHUB_TOKEN=$(gh auth token) goreleaser release --clean --release-notes <(echo "$NOTES")
 '''
