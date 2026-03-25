@@ -29,8 +29,10 @@ go install github.com/nicwestvold/gwt@latest
 Add to your shell profile (`.zshrc`, `.bashrc`, etc.) for auto-cd into new worktrees after `add` and `clone`:
 
 ```bash
-eval "$(gwt shell-init)"
+eval "$(command gwt shell-init)"
 ```
+
+> **Note:** `command` bypasses shell aliases. This is required if you use oh-my-zsh's git plugin, which aliases `gwt` to `git worktree`.
 
 ## Quick Start
 
