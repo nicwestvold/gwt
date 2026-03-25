@@ -8,6 +8,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// RepoEntry holds the configuration for a single registered repository.
 type RepoEntry struct {
 	Path           string   `toml:"path"`
 	Bare           bool     `toml:"bare,omitempty"`
@@ -17,6 +18,7 @@ type RepoEntry struct {
 	MainBranch     string   `toml:"main_branch,omitempty"`
 }
 
+// Config is the top-level gwt configuration, keyed by canonical repo name.
 type Config struct {
 	Repos map[string]RepoEntry `toml:"repos"`
 }
@@ -43,7 +45,7 @@ func DataDir() (string, error) {
 	return filepath.Join(home, ".local", "share", "gwt"), nil
 }
 
-func Path() (string, error) {
+func configPath() (string, error) {
 	dir, err := ConfigDir()
 	if err != nil {
 		return "", err
@@ -53,7 +55,7 @@ func Path() (string, error) {
 
 func Load() (*Config, error) {
 	cfg := &Config{Repos: make(map[string]RepoEntry)}
-	p, err := Path()
+	p, err := configPath()
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +83,7 @@ func (c *Config) Save() error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	p, err := Path()
+	p, err := configPath()
 	if err != nil {
 		return err
 	}
@@ -91,12 +93,12 @@ func (c *Config) Save() error {
 	}
 	tmpName := tmp.Name()
 	if err := toml.NewEncoder(tmp).Encode(c); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return err
 	}
 	return os.Rename(tmpName, p)

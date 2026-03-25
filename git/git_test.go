@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -262,7 +263,7 @@ func TestNewRepo(t *testing.T) {
 
 	t.Run("from project root", func(t *testing.T) {
 		origDir, _ := os.Getwd()
-		t.Cleanup(func() { os.Chdir(origDir) })
+		t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 		if err := os.Chdir(project); err != nil {
 			t.Fatal(err)
@@ -282,7 +283,7 @@ func TestNewRepo(t *testing.T) {
 
 	t.Run("from inside worktree", func(t *testing.T) {
 		origDir, _ := os.Getwd()
-		t.Cleanup(func() { os.Chdir(origDir) })
+		t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 		if err := os.Chdir(worktreeDir); err != nil {
 			t.Fatal(err)
@@ -302,7 +303,7 @@ func TestNewRepo(t *testing.T) {
 
 	t.Run("from nested worktree subdirectory", func(t *testing.T) {
 		origDir, _ := os.Getwd()
-		t.Cleanup(func() { os.Chdir(origDir) })
+		t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 		nestedDir := filepath.Join(worktreeDir, "sub", "deep")
 		if err := os.MkdirAll(nestedDir, 0o755); err != nil {
@@ -357,7 +358,7 @@ func TestNewRepoNormalRepo(t *testing.T) {
 
 	t.Run("from repo root", func(t *testing.T) {
 		origDir, _ := os.Getwd()
-		t.Cleanup(func() { os.Chdir(origDir) })
+		t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 		if err := os.Chdir(repoDir); err != nil {
 			t.Fatal(err)
@@ -377,7 +378,7 @@ func TestNewRepoNormalRepo(t *testing.T) {
 
 	t.Run("from subdirectory", func(t *testing.T) {
 		origDir, _ := os.Getwd()
-		t.Cleanup(func() { os.Chdir(origDir) })
+		t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 		subDir := filepath.Join(repoDir, "sub", "deep")
 		if err := os.MkdirAll(subDir, 0o755); err != nil {
@@ -563,7 +564,7 @@ func TestRemove(t *testing.T) {
 		run("git", "-C", project, "worktree", "add", "-b", "force-test", wtDir)
 
 		// Create an untracked file to make it dirty
-		os.WriteFile(filepath.Join(wtDir, "dirty.txt"), []byte("dirty"), 0o644)
+		_ = os.WriteFile(filepath.Join(wtDir, "dirty.txt"), []byte("dirty"), 0o644)
 
 		repoDir, _, err := repo.Remove([]string{"--force", wtDir})
 		if err != nil {
@@ -574,12 +575,38 @@ func TestRemove(t *testing.T) {
 		}
 	})
 
+	t.Run("auto-detect current worktree", func(t *testing.T) {
+		wtDir := filepath.Join(project, "feat-autodetect")
+		run("git", "-C", project, "worktree", "add", "-b", "autodetect", wtDir)
+
+		// Change into the worktree so auto-detect finds it.
+		origDir, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chdir(wtDir); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chdir(origDir) })
+
+		repoDir, removedPath, err := repo.Remove([]string{})
+		if err != nil {
+			t.Fatalf("Remove() auto-detect error: %v", err)
+		}
+		if repoDir != project {
+			t.Errorf("repoDir = %q, want %q", repoDir, project)
+		}
+		if removedPath != wtDir {
+			t.Errorf("worktreePath = %q, want %q", removedPath, wtDir)
+		}
+	})
+
 	t.Run("refuses to remove main working tree", func(t *testing.T) {
 		_, _, err := repo.Remove([]string{project})
 		if err == nil {
 			t.Fatal("Remove(project) should error when targeting main working tree")
 		}
-		if !contains(err.Error(), "refusing to remove") {
+		if !strings.Contains(err.Error(), "refusing to remove") {
 			t.Errorf("error = %q, want to contain 'refusing to remove'", err.Error())
 		}
 	})
@@ -690,17 +717,4 @@ func exitState(t *testing.T, code int) *os.ProcessState {
 		t.Fatalf("expected ExitError, got %v", err)
 	}
 	return exitErr.ProcessState
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

@@ -110,10 +110,9 @@ func (r *Repo) Remove(args []string) (repoDir, worktreePath string, err error) {
 	}
 
 	if len(positional) == 0 {
-		// Auto-detect current worktree.
+		// Auto-detect current worktree from the user's working directory.
 		var buf, stderr bytes.Buffer
 		cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-		cmd.Dir = r.Dir
 		cmd.Stdout = &buf
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
@@ -155,12 +154,13 @@ func CleanEmptyParents(dir, stopAt string) {
 	dir = filepath.Clean(dir)
 	stopAt = filepath.Clean(stopAt)
 	prefix := stopAt + string(filepath.Separator)
+	// Best-effort cleanup; errors are intentionally ignored.
 	for dir != stopAt && strings.HasPrefix(dir, prefix) {
 		entries, err := os.ReadDir(dir)
 		if err != nil || len(entries) > 0 {
 			return
 		}
-		os.Remove(dir)
+		_ = os.Remove(dir)
 		dir = filepath.Dir(dir)
 	}
 }
@@ -204,7 +204,7 @@ func (r *Repo) Add(args []string, baseDir string) (string, error) {
 			return worktreePath, nil
 		}
 		// Other error — flush captured stderr so user sees it
-		os.Stderr.Write(stderrBuf.Bytes())
+		_, _ = os.Stderr.Write(stderrBuf.Bytes())
 		return "", fmt.Errorf("git worktree add failed: %w", err)
 	}
 	return worktreePath, nil
@@ -387,7 +387,7 @@ func ExitCode(err error) int {
 
 func WriteCdFile(path string) {
 	if cdFile := os.Getenv("GWT_CD_FILE"); cdFile != "" && path != "" {
-		os.WriteFile(cdFile, []byte(path), 0o644)
+		_ = os.WriteFile(cdFile, []byte(path), 0o644)
 	}
 }
 

@@ -174,15 +174,15 @@ func TestDataDir(t *testing.T) {
 	})
 }
 
-func TestPath(t *testing.T) {
+func TestConfigPath(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/custom/config")
-	got, err := Path()
+	got, err := configPath()
 	if err != nil {
-		t.Fatalf("Path() error: %v", err)
+		t.Fatalf("configPath() error: %v", err)
 	}
 	want := "/custom/config/gwt/config.toml"
 	if got != want {
-		t.Errorf("Path() = %q, want %q", got, want)
+		t.Errorf("configPath() = %q, want %q", got, want)
 	}
 }
 

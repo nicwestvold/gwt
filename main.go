@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime/debug"
 	"strings"
 
@@ -77,13 +78,6 @@ type hookOptions struct {
 	force          bool
 }
 
-func defaultHookOptions() hookOptions {
-	return hookOptions{
-		mainBranch: "main",
-		copyFiles:  []string{".env"},
-	}
-}
-
 func setupHook(repo *git.Repo, opts hookOptions) error {
 	if repo.IsBare {
 		if err := repo.ConfigureFetch(); err != nil {
@@ -118,22 +112,22 @@ func setupHook(repo *git.Repo, opts hookOptions) error {
 	return nil
 }
 
-// worktreeBaseDir returns the parent directory for new worktrees.
-// For bare repos, this is repo.Dir. For regular repos, this is
-// ~/.local/share/gwt/worktrees/<owner>/<repo>.
-func worktreeBaseDir(repo *git.Repo) (string, error) {
-	if repo.IsBare {
-		return repo.Dir, nil
-	}
+// worktreeBaseDir returns the parent directory for new worktrees and the
+// canonical repo name. For bare repos, the base dir is repo.Dir. For regular
+// repos, it is ~/.local/share/gwt/worktrees/<owner>/<repo>.
+func worktreeBaseDir(repo *git.Repo) (baseDir, canonicalName string, err error) {
 	name, err := repo.CanonicalName()
 	if err != nil {
-		return "", fmt.Errorf("failed to determine canonical repo name: %w", err)
+		return "", "", fmt.Errorf("failed to determine canonical repo name: %w", err)
+	}
+	if repo.IsBare {
+		return repo.Dir, name, nil
 	}
 	dataDir, err := config.DataDir()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return filepath.Join(dataDir, "worktrees", name), nil
+	return filepath.Join(dataDir, "worktrees", name), name, nil
 }
 
 var cloneCmd = &cobra.Command{
@@ -247,7 +241,7 @@ installed via 'gwt init'.`,
 			return err
 		}
 
-		baseDir, err := worktreeBaseDir(repo)
+		baseDir, canonicalName, err := worktreeBaseDir(repo)
 		if err != nil {
 			return err
 		}
@@ -256,8 +250,8 @@ installed via 'gwt init'.`,
 			if err := os.MkdirAll(baseDir, 0o755); err != nil {
 				return fmt.Errorf("failed to create worktree directory: %w", err)
 			}
-			if err := ensureRegistered(repo); err != nil {
-				return err
+			if err := ensureRegistered(repo, canonicalName); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to register repo in config: %v\n", err)
 			}
 		}
 
@@ -384,11 +378,7 @@ var initCmd = &cobra.Command{
 		}
 
 		if err := registerRepo(repo, opts); err != nil {
-			if repo.IsBare {
-				fmt.Fprintf(os.Stderr, "warning: failed to register repo in config: %v\n", err)
-			} else {
-				return err
-			}
+			fmt.Fprintf(os.Stderr, "warning: failed to register repo in config: %v\n", err)
 		}
 
 		return setupHook(repo, opts)
@@ -416,24 +406,24 @@ func registerRepo(repo *git.Repo, opts hookOptions) error {
 		CopyFiles:      opts.copyFiles,
 		MainBranch:     opts.mainBranch,
 	}
+
+	if existing, ok := cfg.Lookup(name); ok && reflect.DeepEqual(existing, entry) {
+		return nil
+	}
+
 	cfg.Register(name, entry)
 
 	if err := cfg.Save(); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	p, _ := config.Path()
-	fmt.Printf("Registered %s in %s\n", name, p)
+	fmt.Printf("Registered %s in config\n", name)
 	return nil
 }
 
 // ensureRegistered adds the repo to the config if not already present.
 // Used by add to auto-register non-bare repos with a minimal entry.
-func ensureRegistered(repo *git.Repo) error {
-	name, err := repo.CanonicalName()
-	if err != nil {
-		return err
-	}
+func ensureRegistered(repo *git.Repo, name string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)

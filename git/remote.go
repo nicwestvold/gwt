@@ -48,6 +48,7 @@ func ParseCanonicalName(rawURL string) string {
 			path = afterScheme[slashIdx+1:]
 		}
 	} else if idx := strings.Index(s, ":"); idx >= 0 && !strings.Contains(s[:idx], "/") {
+		// Reached only when no scheme ("://") is present, so ":" is the SCP-style separator.
 		// SSH shorthand: git@github.com:owner/repo
 		path = s[idx+1:]
 	} else {
