@@ -186,7 +186,7 @@ func TestConfigPath(t *testing.T) {
 	}
 }
 
-func TestSaveAtomicity(t *testing.T) {
+func TestSaveOverwriteCleansTempFiles(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmp)
 

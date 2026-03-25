@@ -1,7 +1,6 @@
 package git
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -21,6 +20,7 @@ func TestParseCanonicalName(t *testing.T) {
 		{"ssh://git@github.com/grafana/metrics-drilldown.git", "grafana/metrics-drilldown"},
 		{"ssh://git@github.com/grafana/metrics-drilldown", "grafana/metrics-drilldown"},
 		{"ssh://git@github.com:22/grafana/metrics-drilldown.git", "grafana/metrics-drilldown"},
+		// GitLab nested groups: only last two segments are preserved (intentional).
 		{"https://gitlab.com/org/subgroup/repo.git", "subgroup/repo"},
 		{"git@gitlab.com:org/subgroup/repo.git", "subgroup/repo"},
 		{"/path/to/repo", "to/repo"},
@@ -43,24 +43,12 @@ func TestCanonicalName(t *testing.T) {
 		t.Skip("git not found in PATH")
 	}
 
-	gitEnv := append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test")
-
-	run := func(t *testing.T, name string, args ...string) {
-		t.Helper()
-		cmd := exec.Command(name, args...)
-		cmd.Env = gitEnv
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("%s %v: %v", name, args, err)
-		}
-	}
-
 	t.Run("with origin remote", func(t *testing.T) {
 		tmp := t.TempDir()
 		repoDir := filepath.Join(tmp, "myrepo")
-		run(t, "git", "init", repoDir)
-		run(t, "git", "-C", repoDir, "commit", "--allow-empty", "-m", "init")
-		run(t, "git", "-C", repoDir, "remote", "add", "origin", "https://github.com/owner/myrepo.git")
+		testRunGit(t, "git", "init", repoDir)
+		testRunGit(t, "git", "-C", repoDir, "commit", "--allow-empty", "-m", "init")
+		testRunGit(t, "git", "-C", repoDir, "remote", "add", "origin", "https://github.com/owner/myrepo.git")
 
 		repoDir, _ = filepath.EvalSymlinks(repoDir)
 		repo := &Repo{Dir: repoDir}
@@ -76,8 +64,8 @@ func TestCanonicalName(t *testing.T) {
 	t.Run("without origin remote", func(t *testing.T) {
 		tmp := t.TempDir()
 		repoDir := filepath.Join(tmp, "localrepo")
-		run(t, "git", "init", repoDir)
-		run(t, "git", "-C", repoDir, "commit", "--allow-empty", "-m", "init")
+		testRunGit(t, "git", "init", repoDir)
+		testRunGit(t, "git", "-C", repoDir, "commit", "--allow-empty", "-m", "init")
 
 		repoDir, _ = filepath.EvalSymlinks(repoDir)
 		repo := &Repo{Dir: repoDir}

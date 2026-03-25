@@ -225,17 +225,7 @@ func TestNewRepo(t *testing.T) {
 
 	// Create a source repo with one commit, then clone it bare.
 	sourceDir := filepath.Join(tmp, "source")
-	gitEnv := append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test")
-
-	run := func(name string, args ...string) {
-		t.Helper()
-		cmd := exec.Command(name, args...)
-		cmd.Env = gitEnv
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("%s %v: %v", name, args, err)
-		}
-	}
+	run := func(name string, args ...string) { testRunGit(t, name, args...) }
 
 	run("git", "init", sourceDir)
 	run("git", "-C", sourceDir, "commit", "--allow-empty", "-m", "init")
@@ -335,17 +325,7 @@ func TestNewRepoNormalRepo(t *testing.T) {
 	tmp := t.TempDir()
 	repoDir := filepath.Join(tmp, "normalrepo")
 
-	gitEnv := append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test")
-
-	run := func(name string, args ...string) {
-		t.Helper()
-		cmd := exec.Command(name, args...)
-		cmd.Env = gitEnv
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("%s %v: %v", name, args, err)
-		}
-	}
+	run := func(name string, args ...string) { testRunGit(t, name, args...) }
 
 	run("git", "init", repoDir)
 	run("git", "-C", repoDir, "commit", "--allow-empty", "-m", "init")
@@ -399,6 +379,35 @@ func TestNewRepoNormalRepo(t *testing.T) {
 			t.Error("IsBare = true, want false")
 		}
 	})
+
+	// This test changes cwd and must not run in parallel.
+	t.Run("from linked worktree", func(t *testing.T) {
+		origDir, _ := os.Getwd()
+		t.Cleanup(func() { _ = os.Chdir(origDir) })
+
+		wtDir := filepath.Join(tmp, "worktrees", "feat-linked")
+		run("git", "-C", repoDir, "worktree", "add", "-b", "feat-linked", wtDir)
+
+		wtDir, err := filepath.EvalSymlinks(wtDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := os.Chdir(wtDir); err != nil {
+			t.Fatal(err)
+		}
+
+		repo, err := NewRepo()
+		if err != nil {
+			t.Fatalf("NewRepo() error: %v", err)
+		}
+		if repo.Dir != repoDir {
+			t.Errorf("Dir = %q, want %q (main repo root)", repo.Dir, repoDir)
+		}
+		if repo.IsBare {
+			t.Error("IsBare = true, want false")
+		}
+	})
 }
 
 func TestAdd(t *testing.T) {
@@ -410,17 +419,7 @@ func TestAdd(t *testing.T) {
 	sourceDir := filepath.Join(tmp, "source")
 	project := filepath.Join(tmp, "project")
 
-	gitEnv := append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test")
-
-	run := func(name string, args ...string) {
-		t.Helper()
-		cmd := exec.Command(name, args...)
-		cmd.Env = gitEnv
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("%s %v: %v", name, args, err)
-		}
-	}
+	run := func(name string, args ...string) { testRunGit(t, name, args...) }
 
 	// Create source repo with initial commit on main
 	run("git", "init", "-b", "main", sourceDir)
@@ -502,17 +501,7 @@ func TestRemove(t *testing.T) {
 	sourceDir := filepath.Join(tmp, "source")
 	project := filepath.Join(tmp, "project")
 
-	gitEnv := append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test")
-
-	run := func(name string, args ...string) {
-		t.Helper()
-		cmd := exec.Command(name, args...)
-		cmd.Env = gitEnv
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("%s %v: %v", name, args, err)
-		}
-	}
+	run := func(name string, args ...string) { testRunGit(t, name, args...) }
 
 	// Create source repo with initial commit on main
 	run("git", "init", "-b", "main", sourceDir)
@@ -575,6 +564,7 @@ func TestRemove(t *testing.T) {
 		}
 	})
 
+	// This test changes cwd and must not run in parallel.
 	t.Run("auto-detect current worktree", func(t *testing.T) {
 		wtDir := filepath.Join(project, "feat-autodetect")
 		run("git", "-C", project, "worktree", "add", "-b", "autodetect", wtDir)

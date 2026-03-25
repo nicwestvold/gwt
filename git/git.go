@@ -73,6 +73,9 @@ func NewRepo() (*Repo, error) {
 	if strings.TrimSpace(buf.String()) == "true" {
 		dir = filepath.Dir(commonDir)
 		isBare = true
+	} else if !isBare && filepath.Dir(commonDir) != dir {
+		// Linked worktree of a regular repo — resolve to main repo root.
+		dir = filepath.Dir(commonDir)
 	}
 
 	return &Repo{Dir: dir, IsBare: isBare}, nil
@@ -313,15 +316,20 @@ func buildAddArgs(args []string, baseDir string) (gitArgs []string, worktreePath
 }
 
 func repoName(url string) string {
-	name := strings.TrimRight(url, "/")
+	name := ParseCanonicalName(url)
 	if i := strings.LastIndex(name, "/"); i >= 0 {
-		name = name[i+1:]
+		return name[i+1:]
 	}
-	if i := strings.LastIndex(name, ":"); i >= 0 {
-		name = name[i+1:]
+	if name != "" {
+		return name
 	}
-	name = strings.TrimSuffix(name, ".git")
-	return name
+	// Fallback for empty/unparseable URLs.
+	n := strings.TrimRight(url, "/")
+	n = strings.TrimSuffix(n, ".git")
+	if i := strings.LastIndex(n, "/"); i >= 0 {
+		return n[i+1:]
+	}
+	return n
 }
 
 func Clone(url, dir string) (_ string, retErr error) {

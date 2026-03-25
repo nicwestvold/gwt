@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/BurntSushi/toml"
 )
@@ -76,15 +77,12 @@ func Load() (*Config, error) {
 }
 
 func (c *Config) Save() error {
-	dir, err := ConfigDir()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
 	p, err := configPath()
 	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, "config-*.toml")
@@ -111,4 +109,14 @@ func (c *Config) Lookup(name string) (RepoEntry, bool) {
 
 func (c *Config) Register(name string, entry RepoEntry) {
 	c.Repos[name] = entry
+}
+
+// Equal reports whether two RepoEntry values are identical.
+func (e RepoEntry) Equal(other RepoEntry) bool {
+	return e.Path == other.Path &&
+		e.Bare == other.Bare &&
+		e.PackageManager == other.PackageManager &&
+		e.VersionManager == other.VersionManager &&
+		e.MainBranch == other.MainBranch &&
+		(len(e.CopyFiles) == 0 && len(other.CopyFiles) == 0 || slices.Equal(e.CopyFiles, other.CopyFiles))
 }

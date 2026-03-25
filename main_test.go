@@ -28,6 +28,7 @@ func TestWorktreeBaseDir(t *testing.T) {
 		tmp := t.TempDir()
 		t.Setenv("XDG_DATA_HOME", tmp)
 
+		// Uses a non-existent dir — exercises CanonicalName's filepath.Base fallback.
 		repo := &git.Repo{Dir: "/some/normal/repo", IsBare: false}
 		baseDir, name, err := worktreeBaseDir(repo)
 		if err != nil {

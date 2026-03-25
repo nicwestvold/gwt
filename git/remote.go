@@ -34,6 +34,8 @@ func (r *Repo) CanonicalName() (string, error) {
 
 // ParseCanonicalName extracts "owner/repo" from a remote URL.
 // Supports HTTPS, SSH URL, and SSH shorthand formats.
+// For paths with more than two segments (e.g. GitLab nested groups),
+// only the last two segments are returned.
 func ParseCanonicalName(rawURL string) string {
 	s := strings.TrimRight(rawURL, "/")
 	s = strings.TrimSuffix(s, ".git")

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime/debug"
 	"strings"
 
@@ -58,7 +57,6 @@ Pass-through commands:
 
 Aliases:
   ls    list
-  rm    remove
 
 Additional commands:
   clone      Clone a repo into a bare-repo worktree structure
@@ -66,8 +64,8 @@ Additional commands:
   shell-init Print shell integration for auto-cd
 
 Enhanced commands:
-  add     Create a worktree (setup handled by post-checkout hook)
-  remove  Remove a worktree (auto-cd back, cleanup empty dirs)`,
+  add        Create a worktree (setup handled by post-checkout hook)
+  remove/rm  Remove a worktree (auto-cd back, cleanup empty dirs)`,
 }
 
 type hookOptions struct {
@@ -385,8 +383,8 @@ var initCmd = &cobra.Command{
 	},
 }
 
-// registerRepo saves a repo to the config, always overwriting any existing entry.
-// Used by init and clone to persist the full hook configuration.
+// registerRepo saves a repo to the config, overwriting if the configuration has changed.
+// Used by init and clone to persist the hook configuration.
 func registerRepo(repo *git.Repo, opts hookOptions) error {
 	name, err := repo.CanonicalName()
 	if err != nil {
@@ -407,7 +405,7 @@ func registerRepo(repo *git.Repo, opts hookOptions) error {
 		MainBranch:     opts.mainBranch,
 	}
 
-	if existing, ok := cfg.Lookup(name); ok && reflect.DeepEqual(existing, entry) {
+	if existing, ok := cfg.Lookup(name); ok && existing.Equal(entry) {
 		return nil
 	}
 
