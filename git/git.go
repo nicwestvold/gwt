@@ -8,8 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/nicwestvold/gwt/config"
 )
 
 type Repo struct {
@@ -94,11 +92,17 @@ func (r *Repo) Passthrough(args []string) error {
 // it auto-detects the current worktree directory. Returns the repo dir
 // (for cd-back) and the removed worktree path (for cleanup).
 func (r *Repo) Remove(args []string) (repoDir, worktreePath string, err error) {
-	// Separate flags from positional args to detect if a path was given.
+	// Separate flags from positional args, respecting "--" separator.
 	var flags []string
 	var positional []string
+	pastSeparator := false
 	for _, a := range args {
-		if strings.HasPrefix(a, "-") {
+		if !pastSeparator && a == "--" {
+			pastSeparator = true
+			flags = append(flags, a)
+			continue
+		}
+		if !pastSeparator && strings.HasPrefix(a, "-") {
 			flags = append(flags, a)
 		} else {
 			positional = append(positional, a)
@@ -109,25 +113,29 @@ func (r *Repo) Remove(args []string) (repoDir, worktreePath string, err error) {
 		// Auto-detect current worktree.
 		var buf, stderr bytes.Buffer
 		cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+		cmd.Dir = r.Dir
 		cmd.Stdout = &buf
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
 			return "", "", fmt.Errorf("not inside a worktree: %w (%s)", err, strings.TrimSpace(stderr.String()))
 		}
 		worktreePath = strings.TrimSpace(buf.String())
-		positional = append(positional, worktreePath)
 	} else {
 		// Resolve the provided path to absolute.
 		worktreePath, err = filepath.Abs(positional[0])
 		if err != nil {
 			return "", "", fmt.Errorf("failed to resolve path: %w", err)
 		}
-		positional[0] = worktreePath
+	}
+
+	// Guard against removing the main working tree.
+	if filepath.Clean(worktreePath) == filepath.Clean(r.Dir) {
+		return "", "", fmt.Errorf("refusing to remove the main working tree: %s", worktreePath)
 	}
 
 	gitArgs := []string{"worktree", "remove"}
 	gitArgs = append(gitArgs, flags...)
-	gitArgs = append(gitArgs, positional...)
+	gitArgs = append(gitArgs, worktreePath)
 
 	cmd := exec.Command("git", gitArgs...)
 	cmd.Dir = r.Dir
@@ -146,7 +154,8 @@ func (r *Repo) Remove(args []string) (repoDir, worktreePath string, err error) {
 func CleanEmptyParents(dir, stopAt string) {
 	dir = filepath.Clean(dir)
 	stopAt = filepath.Clean(stopAt)
-	for dir != stopAt && strings.HasPrefix(dir, stopAt+string(filepath.Separator)) {
+	prefix := stopAt + string(filepath.Separator)
+	for dir != stopAt && strings.HasPrefix(dir, prefix) {
 		entries, err := os.ReadDir(dir)
 		if err != nil || len(entries) > 0 {
 			return
@@ -156,55 +165,9 @@ func CleanEmptyParents(dir, stopAt string) {
 	}
 }
 
-// WorktreeBaseDir returns the parent directory for new worktrees.
-// For bare repos, this is r.Dir. For regular repos, this is
-// ~/.local/share/gwt/worktrees/<owner>/<repo>.
-func (r *Repo) WorktreeBaseDir() (string, error) {
-	if r.IsBare {
-		return r.Dir, nil
-	}
-	name, err := r.CanonicalName()
-	if err != nil {
-		return "", fmt.Errorf("failed to determine canonical repo name: %w", err)
-	}
-	return filepath.Join(config.DataDir(), "worktrees", name), nil
-}
-
-// autoRegister adds this repo to the gwt config if not already present.
-func (r *Repo) autoRegister() error {
-	name, err := r.CanonicalName()
-	if err != nil {
-		return err
-	}
-	cfg, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-	if _, ok := cfg.Lookup(name); ok {
-		return nil
-	}
-	cfg.Register(name, config.RepoEntry{Path: r.Dir})
-	if err := cfg.Save(); err != nil {
-		return fmt.Errorf("failed to save config: %w", err)
-	}
-	return nil
-}
-
-func (r *Repo) Add(args []string) (string, error) {
-	baseDir, err := r.WorktreeBaseDir()
-	if err != nil {
-		return "", err
-	}
-
-	if !r.IsBare {
-		if err := os.MkdirAll(baseDir, 0o755); err != nil {
-			return "", fmt.Errorf("failed to create worktree directory: %w", err)
-		}
-		if err := r.autoRegister(); err != nil {
-			return "", err
-		}
-	}
-
+// Add creates a worktree. baseDir is the parent directory where the
+// worktree subdirectory will be created.
+func (r *Repo) Add(args []string, baseDir string) (string, error) {
 	gitArgs, worktreePath, err := buildAddArgs(args, baseDir)
 	if err != nil {
 		return "", err
@@ -253,7 +216,7 @@ func branchToDir(branch string) string {
 
 // buildAddArgs parses user args and returns transformed args for git worktree add
 // plus the derived worktree path.
-func buildAddArgs(args []string, repoDir string) (gitArgs []string, worktreePath string, err error) {
+func buildAddArgs(args []string, baseDir string) (gitArgs []string, worktreePath string, err error) {
 	if len(args) == 0 {
 		return nil, "", fmt.Errorf("requires a branch name")
 	}
@@ -333,7 +296,7 @@ func buildAddArgs(args []string, repoDir string) (gitArgs []string, worktreePath
 	}
 
 	dir := branchToDir(branch)
-	worktreePath = filepath.Join(repoDir, dir)
+	worktreePath = filepath.Join(baseDir, dir)
 
 	if branchFlag != "" {
 		// flags... worktreePath [start-point]
@@ -463,4 +426,3 @@ func (r *Repo) ConfigureFetch() error {
 	}
 	return nil
 }
-

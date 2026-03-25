@@ -31,7 +31,7 @@ func TestBranchToDir(t *testing.T) {
 }
 
 func TestBuildAddArgs(t *testing.T) {
-	repoDir := "/repo"
+	baseDir := "/repo"
 
 	tests := []struct {
 		name     string
@@ -108,7 +108,7 @@ func TestBuildAddArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotArgs, gotPath, err := buildAddArgs(tt.args, repoDir)
+			gotArgs, gotPath, err := buildAddArgs(tt.args, baseDir)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("buildAddArgs(%v) expected error, got nil", tt.args)
@@ -453,7 +453,7 @@ func TestAdd(t *testing.T) {
 	run("git", "-C", project, "fetch", "origin")
 
 	t.Run("success on first attempt", func(t *testing.T) {
-		got, err := repo.Add([]string{"main"})
+		got, err := repo.Add([]string{"main"}, project)
 		if err != nil {
 			t.Fatalf("Add([\"main\"]) unexpected error: %v", err)
 		}
@@ -471,7 +471,7 @@ func TestAdd(t *testing.T) {
 		run("git", "-C", sourceDir, "checkout", "-b", "new-feature")
 		run("git", "-C", sourceDir, "commit", "--allow-empty", "-m", "new feature")
 
-		got, err := repo.Add([]string{"new-feature"})
+		got, err := repo.Add([]string{"new-feature"}, project)
 		if err != nil {
 			t.Fatalf("Add([\"new-feature\"]) unexpected error: %v", err)
 		}
@@ -485,22 +485,115 @@ func TestAdd(t *testing.T) {
 	})
 
 	t.Run("fails cleanly for nonexistent branch", func(t *testing.T) {
-		_, err := repo.Add([]string{"totally-fake"})
+		_, err := repo.Add([]string{"totally-fake"}, project)
 		if err == nil {
 			t.Fatal("Add([\"totally-fake\"]) expected error, got nil")
 		}
 	})
 }
 
-func TestCleanEmptyParents(t *testing.T) {
+func TestRemove(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
 	tmp := t.TempDir()
-	stopAt := filepath.Join(tmp, "worktrees")
-	deep := filepath.Join(stopAt, "owner", "repo", "feat-x")
-	if err := os.MkdirAll(deep, 0o755); err != nil {
+	sourceDir := filepath.Join(tmp, "source")
+	project := filepath.Join(tmp, "project")
+
+	gitEnv := append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test")
+
+	run := func(name string, args ...string) {
+		t.Helper()
+		cmd := exec.Command(name, args...)
+		cmd.Env = gitEnv
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%s %v: %v", name, args, err)
+		}
+	}
+
+	// Create source repo with initial commit on main
+	run("git", "init", "-b", "main", sourceDir)
+	run("git", "-C", sourceDir, "commit", "--allow-empty", "-m", "init")
+
+	// Clone bare into project/.bare and write .git file
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run("git", "clone", "--bare", sourceDir, filepath.Join(project, ".bare"))
+	if err := os.WriteFile(filepath.Join(project, ".git"), []byte("gitdir: ./.bare\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
+	// Resolve symlinks for macOS (/var -> /private/var)
+	project, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repo := &Repo{Dir: project, IsBare: true}
+	if err := repo.ConfigureFetch(); err != nil {
+		t.Fatalf("ConfigureFetch: %v", err)
+	}
+	run("git", "-C", project, "fetch", "origin")
+
+	t.Run("remove with explicit path", func(t *testing.T) {
+		// Add a worktree, then remove it by path.
+		wtDir := filepath.Join(project, "feat-remove-test")
+		run("git", "-C", project, "worktree", "add", "-b", "remove-test", wtDir)
+
+		repoDir, removedPath, err := repo.Remove([]string{wtDir})
+		if err != nil {
+			t.Fatalf("Remove() error: %v", err)
+		}
+		if repoDir != project {
+			t.Errorf("repoDir = %q, want %q", repoDir, project)
+		}
+		if removedPath != wtDir {
+			t.Errorf("worktreePath = %q, want %q", removedPath, wtDir)
+		}
+		if _, err := os.Stat(wtDir); !os.IsNotExist(err) {
+			t.Error("worktree directory should not exist after removal")
+		}
+	})
+
+	t.Run("remove with force flag", func(t *testing.T) {
+		wtDir := filepath.Join(project, "feat-force-test")
+		run("git", "-C", project, "worktree", "add", "-b", "force-test", wtDir)
+
+		// Create an untracked file to make it dirty
+		os.WriteFile(filepath.Join(wtDir, "dirty.txt"), []byte("dirty"), 0o644)
+
+		repoDir, _, err := repo.Remove([]string{"--force", wtDir})
+		if err != nil {
+			t.Fatalf("Remove(--force) error: %v", err)
+		}
+		if repoDir != project {
+			t.Errorf("repoDir = %q, want %q", repoDir, project)
+		}
+	})
+
+	t.Run("refuses to remove main working tree", func(t *testing.T) {
+		_, _, err := repo.Remove([]string{project})
+		if err == nil {
+			t.Fatal("Remove(project) should error when targeting main working tree")
+		}
+		if !contains(err.Error(), "refusing to remove") {
+			t.Errorf("error = %q, want to contain 'refusing to remove'", err.Error())
+		}
+	})
+}
+
+func TestCleanEmptyParents(t *testing.T) {
 	t.Run("removes empty dirs up to stopAt", func(t *testing.T) {
+		tmp := t.TempDir()
+		stopAt := filepath.Join(tmp, "worktrees")
+		deep := filepath.Join(stopAt, "owner", "repo", "feat-x")
+		if err := os.MkdirAll(deep, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
 		CleanEmptyParents(deep, stopAt)
 
 		// deep, repo, and owner should all be gone (empty)
@@ -514,6 +607,8 @@ func TestCleanEmptyParents(t *testing.T) {
 	})
 
 	t.Run("stops at non-empty dir", func(t *testing.T) {
+		tmp := t.TempDir()
+		stopAt := filepath.Join(tmp, "worktrees")
 		repoDir := filepath.Join(stopAt, "owner", "repo")
 		wt1 := filepath.Join(repoDir, "feat-a")
 		wt2 := filepath.Join(repoDir, "feat-b")
@@ -534,6 +629,54 @@ func TestCleanEmptyParents(t *testing.T) {
 			t.Error("wt2 should still exist")
 		}
 	})
+
+	t.Run("no-op when dir equals stopAt", func(t *testing.T) {
+		tmp := t.TempDir()
+		stopAt := filepath.Join(tmp, "worktrees")
+		if err := os.MkdirAll(stopAt, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		CleanEmptyParents(stopAt, stopAt)
+
+		if _, err := os.Stat(stopAt); err != nil {
+			t.Error("stopAt should still exist when dir == stopAt")
+		}
+	})
+
+	t.Run("handles already-deleted dir gracefully", func(t *testing.T) {
+		tmp := t.TempDir()
+		stopAt := filepath.Join(tmp, "worktrees")
+		parent := filepath.Join(stopAt, "owner", "repo")
+		deleted := filepath.Join(parent, "feat-x")
+
+		// Create parent but not the leaf — simulates post-removal state.
+		if err := os.MkdirAll(parent, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		// Should not panic; parent is empty so it gets cleaned.
+		CleanEmptyParents(deleted, stopAt)
+	})
+
+	t.Run("cleans from parent of deleted dir", func(t *testing.T) {
+		// This tests the recommended usage pattern: start from filepath.Dir(worktreePath).
+		tmp := t.TempDir()
+		stopAt := filepath.Join(tmp, "worktrees")
+		parent := filepath.Join(stopAt, "owner", "repo")
+		if err := os.MkdirAll(parent, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		CleanEmptyParents(parent, stopAt)
+
+		if _, err := os.Stat(filepath.Join(stopAt, "owner")); !os.IsNotExist(err) {
+			t.Error("owner dir should be removed")
+		}
+		if _, err := os.Stat(stopAt); err != nil {
+			t.Error("stopAt should still exist")
+		}
+	})
 }
 
 // exitState creates an *os.ProcessState with the given exit code by running a
@@ -549,3 +692,15 @@ func exitState(t *testing.T, code int) *os.ProcessState {
 	return exitErr.ProcessState
 }
 
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && searchString(s, substr)
+}
+
+func searchString(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
