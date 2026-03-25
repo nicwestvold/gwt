@@ -73,6 +73,9 @@ func NewRepo() (*Repo, error) {
 	if strings.TrimSpace(buf.String()) == "true" {
 		dir = filepath.Dir(commonDir)
 		isBare = true
+	} else if !isBare && filepath.Dir(commonDir) != dir {
+		// Linked worktree of a regular repo — resolve to main repo root.
+		dir = filepath.Dir(commonDir)
 	}
 
 	return &Repo{Dir: dir, IsBare: isBare}, nil
@@ -88,8 +91,97 @@ func (r *Repo) Passthrough(args []string) error {
 	return cmd.Run()
 }
 
-func (r *Repo) Add(args []string) (string, error) {
-	gitArgs, worktreePath, err := buildAddArgs(args, r.Dir)
+// Remove removes a worktree. If no positional path argument is provided,
+// it auto-detects the current worktree directory. Returns the repo dir
+// (for cd-back) and the removed worktree path (for cleanup).
+func (r *Repo) Remove(args []string) (repoDir, worktreePath string, err error) {
+	// Separate flags from positional args, respecting "--" separator.
+	var flags []string
+	var positional []string
+	pastSeparator := false
+	for _, a := range args {
+		if !pastSeparator && a == "--" {
+			pastSeparator = true
+			flags = append(flags, a)
+			continue
+		}
+		if !pastSeparator && strings.HasPrefix(a, "-") {
+			flags = append(flags, a)
+		} else {
+			positional = append(positional, a)
+		}
+	}
+
+	if len(positional) == 0 {
+		// Auto-detect current worktree from the user's working directory.
+		var buf, stderr bytes.Buffer
+		cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+		cmd.Stdout = &buf
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			return "", "", fmt.Errorf("not inside a worktree: %w (%s)", err, strings.TrimSpace(stderr.String()))
+		}
+		worktreePath = strings.TrimSpace(buf.String())
+	} else {
+		// Resolve the provided path to absolute.
+		worktreePath, err = filepath.Abs(positional[0])
+		if err != nil {
+			return "", "", fmt.Errorf("failed to resolve path: %w", err)
+		}
+	}
+
+	// Resolve symlinks so the guard comparison works on systems
+	// where paths diverge (e.g. macOS /var -> /private/var).
+	if resolved, err := filepath.EvalSymlinks(worktreePath); err == nil {
+		worktreePath = resolved
+	}
+
+	// Guard against removing the main working tree.
+	resolvedDir := r.Dir
+	if resolved, err := filepath.EvalSymlinks(r.Dir); err == nil {
+		resolvedDir = resolved
+	}
+	if filepath.Clean(worktreePath) == filepath.Clean(resolvedDir) {
+		return "", "", fmt.Errorf("refusing to remove the main working tree: %s", worktreePath)
+	}
+
+	gitArgs := []string{"worktree", "remove"}
+	gitArgs = append(gitArgs, flags...)
+	gitArgs = append(gitArgs, worktreePath)
+
+	cmd := exec.Command("git", gitArgs...)
+	cmd.Dir = r.Dir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Run(); err != nil {
+		return "", "", fmt.Errorf("git worktree remove failed: %w", err)
+	}
+
+	return r.Dir, worktreePath, nil
+}
+
+// CleanEmptyParents removes empty directories walking up from dir,
+// stopping before removing stopAt or anything above it.
+func CleanEmptyParents(dir, stopAt string) {
+	dir = filepath.Clean(dir)
+	stopAt = filepath.Clean(stopAt)
+	prefix := stopAt + string(filepath.Separator)
+	// Best-effort cleanup; errors are intentionally ignored.
+	for dir != stopAt && strings.HasPrefix(dir, prefix) {
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) > 0 {
+			return
+		}
+		_ = os.Remove(dir)
+		dir = filepath.Dir(dir)
+	}
+}
+
+// Add creates a worktree. baseDir is the parent directory where the
+// worktree subdirectory will be created.
+func (r *Repo) Add(args []string, baseDir string) (string, error) {
+	gitArgs, worktreePath, err := buildAddArgs(args, baseDir)
 	if err != nil {
 		return "", err
 	}
@@ -125,7 +217,7 @@ func (r *Repo) Add(args []string) (string, error) {
 			return worktreePath, nil
 		}
 		// Other error — flush captured stderr so user sees it
-		os.Stderr.Write(stderrBuf.Bytes())
+		_, _ = os.Stderr.Write(stderrBuf.Bytes())
 		return "", fmt.Errorf("git worktree add failed: %w", err)
 	}
 	return worktreePath, nil
@@ -137,7 +229,7 @@ func branchToDir(branch string) string {
 
 // buildAddArgs parses user args and returns transformed args for git worktree add
 // plus the derived worktree path.
-func buildAddArgs(args []string, repoDir string) (gitArgs []string, worktreePath string, err error) {
+func buildAddArgs(args []string, baseDir string) (gitArgs []string, worktreePath string, err error) {
 	if len(args) == 0 {
 		return nil, "", fmt.Errorf("requires a branch name")
 	}
@@ -217,32 +309,37 @@ func buildAddArgs(args []string, repoDir string) (gitArgs []string, worktreePath
 	}
 
 	dir := branchToDir(branch)
-	worktreePath = filepath.Join(repoDir, dir)
+	worktreePath = filepath.Join(baseDir, dir)
 
 	if branchFlag != "" {
-		// flags... dir [start-point]
+		// flags... worktreePath [start-point]
 		gitArgs = append(gitArgs, flags...)
-		gitArgs = append(gitArgs, dir)
+		gitArgs = append(gitArgs, worktreePath)
 		gitArgs = append(gitArgs, positional...)
 	} else {
-		// flags... dir branch
+		// flags... worktreePath branch
 		gitArgs = append(gitArgs, flags...)
-		gitArgs = append(gitArgs, dir, branch)
+		gitArgs = append(gitArgs, worktreePath, branch)
 	}
 
 	return gitArgs, worktreePath, nil
 }
 
 func repoName(url string) string {
-	name := strings.TrimRight(url, "/")
+	name := ParseCanonicalName(url)
 	if i := strings.LastIndex(name, "/"); i >= 0 {
-		name = name[i+1:]
+		return name[i+1:]
 	}
-	if i := strings.LastIndex(name, ":"); i >= 0 {
-		name = name[i+1:]
+	if name != "" {
+		return name
 	}
-	name = strings.TrimSuffix(name, ".git")
-	return name
+	// Fallback for empty/unparseable URLs.
+	n := strings.TrimRight(url, "/")
+	n = strings.TrimSuffix(n, ".git")
+	if i := strings.LastIndex(n, "/"); i >= 0 {
+		return n[i+1:]
+	}
+	return n
 }
 
 func Clone(url, dir string) (_ string, retErr error) {
@@ -308,7 +405,7 @@ func ExitCode(err error) int {
 
 func WriteCdFile(path string) {
 	if cdFile := os.Getenv("GWT_CD_FILE"); cdFile != "" && path != "" {
-		os.WriteFile(cdFile, []byte(path), 0o644)
+		_ = os.WriteFile(cdFile, []byte(path), 0o644)
 	}
 }
 
@@ -347,4 +444,3 @@ func (r *Repo) ConfigureFetch() error {
 	}
 	return nil
 }
-

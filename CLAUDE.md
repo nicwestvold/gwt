@@ -9,9 +9,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Test
 
 ```bash
-go build -o gwt .       # Build the binary
-go run .                 # Run without building
-go test ./...            # Run all tests
+mise run build           # Build snapshot binary (via goreleaser)
+mise run test            # Run all tests
+mise run lint            # Run golangci-lint
+mise run check           # Lint + test + go mod tidy
+mise run coverage        # Generate coverage report
+mise run install         # Install gwt binary with version info
+mise run release         # Interactive release workflow
 go vet ./...             # Run static analysis
 ```
 
