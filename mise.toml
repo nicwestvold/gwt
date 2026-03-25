@@ -35,7 +35,7 @@ go install -ldflags "-X main.version=$VERSION" .
 '''
 
 [tasks.release]
-description = "Interactive release: prompt for version, generate AI notes, tag and push"
+description = "Interactive release: prompt for version, generate AI notes, tag, push, and publish"
 run = '''
 #!/usr/bin/env bash
 set -e
@@ -111,5 +111,9 @@ fi
 git tag -a "$TAG" -m "$NOTES"
 git push origin "$TAG"
 echo ""
-echo "Tag $TAG pushed — CI will handle the release."
+echo "Tag $TAG pushed. Running goreleaser..."
+echo ""
+
+# Build and publish GitHub release
+goreleaser release --clean --release-notes <(echo "$NOTES")
 '''
