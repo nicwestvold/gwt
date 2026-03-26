@@ -76,6 +76,13 @@ type hookOptions struct {
 	force          bool
 }
 
+func repoBasePath(repo *git.Repo, mainBranch string) string {
+	if repo.IsBare {
+		return filepath.Join(repo.Dir, mainBranch)
+	}
+	return repo.Dir
+}
+
 func setupHook(repo *git.Repo, opts hookOptions) error {
 	if repo.IsBare {
 		if err := repo.ConfigureFetch(); err != nil {
@@ -83,12 +90,7 @@ func setupHook(repo *git.Repo, opts hookOptions) error {
 		}
 	}
 
-	var basePath string
-	if repo.IsBare {
-		basePath = filepath.Join(repo.Dir, opts.mainBranch)
-	} else {
-		basePath = repo.Dir
-	}
+	basePath := repoBasePath(repo, opts.mainBranch)
 
 	hooksDir, err := repo.HooksDir()
 	if err != nil {
@@ -134,7 +136,7 @@ var cloneCmd = &cobra.Command{
 	Long: `Clones a repository as a bare repo inside a .bare/ directory,
 creates a .git file pointing to it, configures fetch, and fetches all branches.
 
-If init flags (--main, --copy, --no-copy, --version-manager, --package-manager)
+If init flags (--main, --copy, --version-manager, --package-manager)
 are provided, a post-checkout hook is also created. Otherwise, run 'gwt init'
 afterward to generate the hook.`,
 	Args: cobra.RangeArgs(1, 2),
@@ -152,13 +154,8 @@ afterward to generate the hook.`,
 
 		mainBranch, _ := cmd.Flags().GetString("main")
 		copyFiles, _ := cmd.Flags().GetStringSlice("copy")
-		noCopy, _ := cmd.Flags().GetBool("no-copy")
 		versionManager, _ := cmd.Flags().GetString("version-manager")
 		packageManager, _ := cmd.Flags().GetString("package-manager")
-
-		if noCopy {
-			copyFiles = nil
-		}
 
 		if versionManager != "" && !validVersionManagers[versionManager] {
 			return fmt.Errorf("invalid version manager %q: must be one of: asdf, mise", versionManager)
@@ -179,7 +176,7 @@ afterward to generate the hook.`,
 			fmt.Fprintf(os.Stderr, "warning: failed to register repo in config: %v\n", regErr)
 		}
 
-		initFlags := []string{"main", "copy", "no-copy", "version-manager", "package-manager"}
+		initFlags := []string{"main", "copy", "version-manager", "package-manager"}
 		wantHook := false
 		for _, f := range initFlags {
 			if cmd.Flags().Changed(f) {
@@ -349,16 +346,9 @@ var initCmd = &cobra.Command{
 
 		mainBranch, _ := cmd.Flags().GetString("main")
 		copyFiles, _ := cmd.Flags().GetStringSlice("copy")
-		noCopy, _ := cmd.Flags().GetBool("no-copy")
 		versionManager, _ := cmd.Flags().GetString("version-manager")
 		packageManager, _ := cmd.Flags().GetString("package-manager")
 		force, _ := cmd.Flags().GetBool("force")
-
-		if noCopy {
-			copyFiles = nil
-		} else if !cmd.Flags().Changed("copy") {
-			copyFiles = []string{".env"}
-		}
 
 		if versionManager != "" && !validVersionManagers[versionManager] {
 			return fmt.Errorf("invalid version manager %q: must be one of: asdf, mise", versionManager)
@@ -377,6 +367,16 @@ var initCmd = &cobra.Command{
 
 		if err := registerRepo(repo, opts); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to register repo in config: %v\n", err)
+		}
+
+		wantHook := cmd.Flags().Changed("copy") || cmd.Flags().Changed("version-manager") || cmd.Flags().Changed("package-manager")
+		if !wantHook {
+			basePath := repoBasePath(repo, mainBranch)
+			if _, err := os.Stat(filepath.Join(basePath, ".env")); err == nil {
+				fmt.Println("hint: .env file found; to copy it to new worktrees, run:")
+				fmt.Println("  gwt init -c .env")
+			}
+			return nil
 		}
 
 		return setupHook(repo, opts)
@@ -441,15 +441,12 @@ func main() {
 	initCmd.Flags().StringSliceP("copy", "c", nil, "Files to copy to new worktrees (repeatable)")
 	initCmd.Flags().StringP("version-manager", "v", "", "Version manager (asdf or mise)")
 	initCmd.Flags().StringP("package-manager", "p", "", "Package manager (pnpm, npm, or yarn)")
-	initCmd.Flags().Bool("no-copy", false, "Suppress default file copying")
 	initCmd.Flags().BoolP("force", "f", false, "Overwrite existing post-checkout hook")
 
 	cloneCmd.Flags().StringP("main", "m", "main", "Set the main branch name")
 	cloneCmd.Flags().StringSliceP("copy", "c", nil, "Files to copy to new worktrees (repeatable)")
 	cloneCmd.Flags().StringP("version-manager", "v", "", "Version manager (asdf or mise)")
 	cloneCmd.Flags().StringP("package-manager", "p", "", "Package manager (pnpm, npm, or yarn)")
-	cloneCmd.Flags().Bool("no-copy", false, "Suppress default file copying")
-
 	rootCmd.Version = resolveVersion()
 	rootCmd.AddCommand(addCmd)
 	rootCmd.AddCommand(cloneCmd)

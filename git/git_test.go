@@ -546,6 +546,28 @@ func TestRemove(t *testing.T) {
 		if _, err := os.Stat(wtDir); !os.IsNotExist(err) {
 			t.Error("worktree directory should not exist after removal")
 		}
+		// Branch should also be deleted (it was fully merged).
+		out, _ := exec.Command("git", "-C", project, "branch", "--list", "remove-test").Output()
+		if strings.TrimSpace(string(out)) != "" {
+			t.Error("branch 'remove-test' should have been deleted after worktree removal")
+		}
+	})
+
+	t.Run("remove keeps unmerged branch with warning", func(t *testing.T) {
+		wtDir := filepath.Join(project, "feat-unmerged")
+		run("git", "-C", project, "worktree", "add", "-b", "unmerged-branch", wtDir)
+		// Make a commit so the branch diverges from main.
+		run("git", "-C", wtDir, "commit", "--allow-empty", "-m", "diverge")
+
+		_, _, err := repo.Remove([]string{wtDir})
+		if err != nil {
+			t.Fatalf("Remove() error: %v", err)
+		}
+		// Branch should still exist because it's not fully merged.
+		out, _ := exec.Command("git", "-C", project, "branch", "--list", "unmerged-branch").Output()
+		if strings.TrimSpace(string(out)) == "" {
+			t.Error("branch 'unmerged-branch' should NOT have been deleted (it is unmerged)")
+		}
 	})
 
 	t.Run("remove with force flag", func(t *testing.T) {

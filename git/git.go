@@ -145,6 +145,21 @@ func (r *Repo) Remove(args []string) (repoDir, worktreePath string, err error) {
 		return "", "", fmt.Errorf("refusing to remove the main working tree: %s", worktreePath)
 	}
 
+	// Detect the branch checked out in the worktree before removal.
+	var branch string
+	{
+		var buf bytes.Buffer
+		bc := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+		bc.Dir = worktreePath
+		bc.Stdout = &buf
+		if bc.Run() == nil {
+			b := strings.TrimSpace(buf.String())
+			if b != "HEAD" { // skip detached HEAD
+				branch = b
+			}
+		}
+	}
+
 	gitArgs := []string{"worktree", "remove"}
 	gitArgs = append(gitArgs, flags...)
 	gitArgs = append(gitArgs, worktreePath)
@@ -156,6 +171,17 @@ func (r *Repo) Remove(args []string) (repoDir, worktreePath string, err error) {
 	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
 		return "", "", fmt.Errorf("git worktree remove failed: %w", err)
+	}
+
+	// Best-effort branch deletion (non-force).
+	if branch != "" {
+		delCmd := exec.Command("git", "branch", "-d", branch)
+		delCmd.Dir = r.Dir
+		delCmd.Stdout = os.Stdout
+		delCmd.Stderr = os.Stderr
+		if err := delCmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not delete branch %q: %v\n", branch, err)
+		}
 	}
 
 	return r.Dir, worktreePath, nil

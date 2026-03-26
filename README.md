@@ -69,23 +69,26 @@ your-repo/
 ```bash
 gwt clone <repo>                         # bare-repo setup, no hook
 gwt clone <repo> --copy .env -p pnpm     # clone and create hook in one step
-gwt clone <repo> -m develop --no-copy    # clone with custom main branch, no file copying
+gwt clone <repo> -m develop              # clone with custom main branch
 ```
 
-Without init flags (`--main`, `--copy`, `--no-copy`, `--version-manager`, `--package-manager`), no post-checkout hook is created. Run `gwt init` afterward to generate one.
+Without init flags (`--main`, `--copy`, `--version-manager`, `--package-manager`), no post-checkout hook is created. Run `gwt init` afterward to generate one.
 
 ### Init
 
 ```bash
-gwt init                                 # generate hook with default file copy (.env)
-gwt init -c .secret -c certs/dev.pem     # custom files to copy
-gwt init --no-copy                       # no file copying
+gwt init                                 # register repo (hints if .env found)
+gwt init -c .env                         # copy .env to new worktrees
+gwt init -c .secret -c certs/dev.pem     # copy multiple files
 gwt init -p pnpm -v mise                 # install deps + build via mise/pnpm
-gwt init --force                         # overwrite existing post-checkout hook
+gwt init -c .env -p pnpm -v mise         # copy files and install deps
+gwt init -f                              # overwrite existing post-checkout hook
 gwt init --main develop                  # set main branch name
 ```
 
 In bare repos, `gwt init` also configures `remote.origin.fetch` so `git fetch` works properly.
+
+When a package manager is specified, the post-checkout hook runs `<manager> install` followed by a build command (`yarn build`, `pnpm run build`, or `npm run build`). If the install step fails, the build is skipped.
 
 ### Add
 
