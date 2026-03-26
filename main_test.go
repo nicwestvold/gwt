@@ -45,7 +45,7 @@ func TestWorktreeBaseDir(t *testing.T) {
 }
 
 func TestShellWrapperContainsCommands(t *testing.T) {
-	for _, cmd := range []string{"add", "clone", "rm", "remove"} {
+	for _, cmd := range []string{"add", "clone", "rm", "remove", "use"} {
 		if !strings.Contains(shellWrapper, `"`+cmd+`"`) {
 			t.Errorf("shellWrapper missing command %q", cmd)
 		}

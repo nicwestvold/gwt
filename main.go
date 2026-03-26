@@ -42,10 +42,8 @@ var rootCmd = &cobra.Command{
 	Short: "A convenience wrapper around git worktree",
 	Long: `gwt is a thin wrapper around git worktree.
 
-Any command not listed below is passed directly to git worktree.
+The following git worktree commands are passed through directly.
 For example, 'gwt list' runs 'git worktree list'.
-
-Run 'git worktree --help' for the full git worktree documentation.
 
 Pass-through commands:
   list    List worktrees
@@ -65,7 +63,8 @@ Additional commands:
 
 Enhanced commands:
   add        Create a worktree (setup handled by post-checkout hook)
-  remove/rm  Remove a worktree (auto-cd back, cleanup empty dirs)`,
+  remove/rm  Remove a worktree by path or branch name (auto-cd back)
+  use        Switch to an existing worktree by branch name`,
 }
 
 type hookOptions struct {
@@ -264,11 +263,15 @@ var removeCmd = &cobra.Command{
 	Short:   "Remove a worktree",
 	Long: `Remove a worktree. If no path is given, removes the current worktree.
 
+Accepts a branch name or a path. If the argument matches a worktree branch,
+it resolves to that worktree's path.
+
 After removal, the shell wrapper (from 'gwt shell-init') will cd back
 to the repository root.
 
 Supports all git worktree remove flags (e.g., --force).`,
-	DisableFlagParsing: true,
+	DisableFlagParsing:    true,
+	ValidArgsFunction:     completeWorktreeBranches,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		for _, a := range args {
 			if a == "--help" || a == "-h" {
@@ -281,7 +284,19 @@ Supports all git worktree remove flags (e.g., --force).`,
 			return err
 		}
 
-		repoDir, worktreePath, err := repo.Remove(args)
+		// Resolve branch names to worktree paths.
+		resolvedArgs := make([]string, len(args))
+		copy(resolvedArgs, args)
+		for i, a := range resolvedArgs {
+			if strings.HasPrefix(a, "-") || strings.HasPrefix(a, "/") || strings.HasPrefix(a, ".") {
+				continue
+			}
+			if path, found, err := repo.FindWorktreeByBranch(a); err == nil && found {
+				resolvedArgs[i] = path
+			}
+		}
+
+		repoDir, worktreePath, err := repo.Remove(resolvedArgs)
 		if err != nil {
 			return err
 		}
@@ -296,6 +311,60 @@ Supports all git worktree remove flags (e.g., --force).`,
 		}
 
 		git.WriteCdFile(repoDir)
+		return nil
+	},
+}
+
+// completeWorktreeBranches provides tab-completion of worktree branch names.
+func completeWorktreeBranches(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	repo, err := git.NewRepo()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	entries, err := repo.ListWorktrees()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var names []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Branch, toComplete) {
+			names = append(names, e.Branch)
+		}
+	}
+	return names, cobra.ShellCompDirectiveNoFileComp
+}
+
+var useCmd = &cobra.Command{
+	Use:   "use <branch>",
+	Short: "Switch to an existing worktree by branch name",
+	Long: `Navigate to an existing worktree that has the given branch checked out.
+
+If no worktree is found for the branch, suggests creating one with 'gwt add'.
+
+Requires shell integration (eval "$(gwt shell-init)") for the cd to work.`,
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeWorktreeBranches,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		branch := args[0]
+
+		repo, err := git.NewRepo()
+		if err != nil {
+			return err
+		}
+
+		path, found, err := repo.FindWorktreeByBranch(branch)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("no worktree found for branch %q\nRun 'gwt add %s' to create one", branch, branch)
+		}
+
+		git.WriteCdFile(path)
+		fmt.Println(path)
 		return nil
 	},
 }
@@ -316,7 +385,7 @@ Add to your shell profile:
 }
 
 const shellWrapper = `gwt() {
-    if [ "${1}" = "add" ] || [ "${1}" = "clone" ] || [ "${1}" = "rm" ] || [ "${1}" = "remove" ]; then
+    if [ "${1}" = "add" ] || [ "${1}" = "clone" ] || [ "${1}" = "rm" ] || [ "${1}" = "remove" ] || [ "${1}" = "use" ]; then
         local _gwt_cd_file
         _gwt_cd_file=$(mktemp)
         GWT_CD_FILE="$_gwt_cd_file" command gwt "$@"
@@ -452,6 +521,7 @@ func main() {
 	rootCmd.AddCommand(cloneCmd)
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(removeCmd)
+	rootCmd.AddCommand(useCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(shellInitCmd)
 
@@ -467,21 +537,31 @@ func main() {
 
 		known := map[string]bool{
 			"init": true, "add": true, "clone": true, "remove": true, "rm": true,
-			"version": true, "shell-init": true,
+			"use": true, "version": true, "shell-init": true,
 			"help": true, "completion": true,
 			"--help": true, "-h": true, "--version": true,
 		}
 
+		// Valid git worktree subcommands forwarded directly.
+		passthroughAllowed := map[string]bool{
+			"list": true, "prune": true, "lock": true,
+			"unlock": true, "move": true, "repair": true,
+		}
+
 		if !known[subcmd] {
-			repo, err := git.NewRepo()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
+			if passthroughAllowed[subcmd] {
+				repo, err := git.NewRepo()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "error: %v\n", err)
+					os.Exit(1)
+				}
+				if err := repo.Passthrough(os.Args[1:]); err != nil {
+					os.Exit(git.ExitCode(err))
+				}
+				return
 			}
-			if err := repo.Passthrough(os.Args[1:]); err != nil {
-				os.Exit(git.ExitCode(err))
-			}
-			return
+			fmt.Fprintf(os.Stderr, "gwt: unknown command %q\n\nRun 'gwt --help' for usage.\n", subcmd)
+			os.Exit(1)
 		}
 	}
 

@@ -470,3 +470,59 @@ func (r *Repo) ConfigureFetch() error {
 	}
 	return nil
 }
+
+// WorktreeEntry represents a single worktree from `git worktree list --porcelain`.
+type WorktreeEntry struct {
+	Path   string
+	Branch string // short name, e.g. "main" or "feature/foo" (refs/heads/ stripped)
+}
+
+// ListWorktrees runs `git worktree list --porcelain` and returns parsed entries.
+// Only entries with a branch (not detached HEAD or bare) are included.
+func (r *Repo) ListWorktrees() ([]WorktreeEntry, error) {
+	var buf, stderr bytes.Buffer
+	cmd := exec.Command("git", "worktree", "list", "--porcelain")
+	cmd.Dir = r.Dir
+	cmd.Stdout = &buf
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("git worktree list failed: %w (%s)", err, strings.TrimSpace(stderr.String()))
+	}
+	return parseWorktreeList(buf.String()), nil
+}
+
+func parseWorktreeList(output string) []WorktreeEntry {
+	var entries []WorktreeEntry
+	var current WorktreeEntry
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "worktree ") {
+			current = WorktreeEntry{Path: strings.TrimPrefix(line, "worktree ")}
+		} else if strings.HasPrefix(line, "branch ") {
+			ref := strings.TrimPrefix(line, "branch ")
+			current.Branch = strings.TrimPrefix(ref, "refs/heads/")
+		} else if line == "" && current.Path != "" {
+			if current.Branch != "" {
+				entries = append(entries, current)
+			}
+			current = WorktreeEntry{}
+		}
+	}
+	if current.Path != "" && current.Branch != "" {
+		entries = append(entries, current)
+	}
+	return entries
+}
+
+// FindWorktreeByBranch returns the path of the worktree checked out on the given branch.
+func (r *Repo) FindWorktreeByBranch(branch string) (string, bool, error) {
+	entries, err := r.ListWorktrees()
+	if err != nil {
+		return "", false, err
+	}
+	for _, e := range entries {
+		if e.Branch == branch {
+			return e.Path, true, nil
+		}
+	}
+	return "", false, nil
+}

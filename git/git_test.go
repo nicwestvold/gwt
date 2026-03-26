@@ -718,6 +718,165 @@ func TestCleanEmptyParents(t *testing.T) {
 	})
 }
 
+func TestParseWorktreeList(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		want   []WorktreeEntry
+	}{
+		{
+			name: "multiple entries",
+			input: `worktree /repo/main
+HEAD abc123
+branch refs/heads/main
+
+worktree /repo/feature-foo
+HEAD def456
+branch refs/heads/feature/foo
+
+`,
+			want: []WorktreeEntry{
+				{Path: "/repo/main", Branch: "main"},
+				{Path: "/repo/feature-foo", Branch: "feature/foo"},
+			},
+		},
+		{
+			name: "skips detached HEAD",
+			input: `worktree /repo/main
+HEAD abc123
+branch refs/heads/main
+
+worktree /repo/detached
+HEAD def456
+detached
+
+`,
+			want: []WorktreeEntry{
+				{Path: "/repo/main", Branch: "main"},
+			},
+		},
+		{
+			name: "skips bare entry",
+			input: `worktree /repo
+HEAD abc123
+bare
+
+worktree /repo/main
+HEAD def456
+branch refs/heads/main
+
+`,
+			want: []WorktreeEntry{
+				{Path: "/repo/main", Branch: "main"},
+			},
+		},
+		{
+			name:  "empty input",
+			input: "",
+			want:  nil,
+		},
+		{
+			name: "no trailing newline",
+			input: `worktree /repo/main
+HEAD abc123
+branch refs/heads/main`,
+			want: []WorktreeEntry{
+				{Path: "/repo/main", Branch: "main"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseWorktreeList(tt.input)
+			if len(got) != len(tt.want) {
+				t.Fatalf("parseWorktreeList() returned %d entries, want %d\ngot: %+v", len(got), len(tt.want), got)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("entry[%d] = %+v, want %+v", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestListWorktrees(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	tmp := t.TempDir()
+	sourceDir := filepath.Join(tmp, "source")
+	project := filepath.Join(tmp, "project")
+
+	run := func(name string, args ...string) { testRunGit(t, name, args...) }
+
+	run("git", "init", "-b", "main", sourceDir)
+	run("git", "-C", sourceDir, "commit", "--allow-empty", "-m", "init")
+
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run("git", "clone", "--bare", sourceDir, filepath.Join(project, ".bare"))
+	if err := os.WriteFile(filepath.Join(project, ".git"), []byte("gitdir: ./.bare\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	project, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repo := &Repo{Dir: project, IsBare: true}
+	if err := repo.ConfigureFetch(); err != nil {
+		t.Fatalf("ConfigureFetch: %v", err)
+	}
+	run("git", "-C", project, "fetch", "origin")
+
+	// Add a worktree
+	wtDir := filepath.Join(project, "main")
+	run("git", "-C", project, "worktree", "add", wtDir, "main")
+
+	entries, err := repo.ListWorktrees()
+	if err != nil {
+		t.Fatalf("ListWorktrees() error: %v", err)
+	}
+
+	// Should have at least the main worktree
+	found := false
+	for _, e := range entries {
+		if e.Branch == "main" && e.Path == wtDir {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected worktree with branch 'main' at %q, got: %+v", wtDir, entries)
+	}
+
+	// Test FindWorktreeByBranch
+	path, ok, err := repo.FindWorktreeByBranch("main")
+	if err != nil {
+		t.Fatalf("FindWorktreeByBranch() error: %v", err)
+	}
+	if !ok {
+		t.Error("FindWorktreeByBranch('main') returned false, want true")
+	}
+	if path != wtDir {
+		t.Errorf("FindWorktreeByBranch('main') = %q, want %q", path, wtDir)
+	}
+
+	// Non-existent branch
+	_, ok, err = repo.FindWorktreeByBranch("nonexistent")
+	if err != nil {
+		t.Fatalf("FindWorktreeByBranch('nonexistent') error: %v", err)
+	}
+	if ok {
+		t.Error("FindWorktreeByBranch('nonexistent') returned true, want false")
+	}
+}
+
 // exitState creates an *os.ProcessState with the given exit code by running a
 // subprocess that exits with that code.
 func exitState(t *testing.T, code int) *os.ProcessState {
