@@ -26,7 +26,7 @@ go install github.com/nicwestvold/gwt@latest
 
 ## Shell Integration (optional)
 
-Add to your shell profile (`.zshrc`, `.bashrc`, etc.) for auto-cd into new worktrees after `add` and `clone`:
+Add to your shell profile (`.zshrc`, `.bashrc`, etc.) for auto-cd after `add`, `clone`, `remove`, and `use`:
 
 ```bash
 eval "$(command gwt shell-init)"
@@ -38,20 +38,23 @@ eval "$(command gwt shell-init)"
 
 ```bash
 gwt clone git@github.com:you/your-repo.git
-cd your-repo                               # auto-cd if shell integration is set up
+cd your-repo
 
-gwt init                                   # generate hook (copies .env by default)
+gwt init -c .env                           # generate hook that copies .env to new worktrees
 gwt add main                               # create worktree for main branch
 gwt add my-feature                         # post-checkout hook runs automatically
-                                           # auto-cd's into worktree with shell integration
+gwt use main                               # jump to the main worktree
+gwt rm my-feature                          # remove worktree + delete branch
 ```
+
+With shell integration, `add`, `clone`, `use`, and `rm` auto-cd you to the right directory.
 
 ## How it works
 
 1. **`gwt clone`** clones a repository into a bare-repo structure
 2. **`gwt init`** generates a `post-checkout` hook (and fixes `git fetch` in bare repos)
 3. **`gwt add`** creates a worktree — git runs the hook automatically
-4. **The hook** copies files (`.env`, etc.), installs dependencies, and runs builds
+4. **The hook** copies files, installs dependencies, and runs builds
 
 ```
 your-repo/
@@ -86,9 +89,9 @@ gwt init -f                              # overwrite existing post-checkout hook
 gwt init --main develop                  # set main branch name
 ```
 
-In bare repos, `gwt init` also configures `remote.origin.fetch` so `git fetch` works properly.
+A hook is only generated when `-c`, `-p`, or `-v` flags are provided. When generating a hook in a bare repo, `gwt init` also configures `remote.origin.fetch` so `git fetch` works properly.
 
-When a package manager is specified, the post-checkout hook runs `<manager> install` followed by a build command (`yarn build`, `pnpm run build`, or `npm run build`). If the install step fails, the build is skipped.
+When a package manager is specified, the hook runs `<manager> install` followed by a build command (`yarn build`, `pnpm run build`, or `npm run build`). If the install step fails, the build is skipped.
 
 ### Add
 
@@ -99,16 +102,43 @@ gwt add -b feat/new-feature              # create a new branch
 gwt add -b feat/new-feature origin/main  # create a new branch from a start-point
 ```
 
+If the branch isn't found locally, `gwt` auto-fetches from origin and retries.
+
 With shell integration, your shell auto-cd's into the new worktree.
+
+### Remove
+
+```bash
+gwt remove my-feature                    # remove worktree by path
+gwt rm my-feature                        # rm is an alias for remove
+gwt rm                                   # no args = remove current worktree
+gwt rm feature/login                     # accepts branch names too
+```
+
+After removing the worktree, `gwt` does a best-effort `git branch -d` to clean up the branch. With shell integration, your shell cd's back to the repo root.
+
+### Use
+
+```bash
+gwt use my-feature                       # cd into the worktree for this branch
+```
+
+Finds the worktree checked out on the given branch and switches to it. Requires shell integration for the auto-cd.
 
 ### Pass-through
 
+These git worktree subcommands are forwarded directly:
+
 ```bash
-gwt list                                 # pass-through to git worktree
-gwt remove my-feature                    # pass-through to git worktree
+gwt list                                 # git worktree list
+gwt prune                                # git worktree prune
+gwt lock <worktree>                      # git worktree lock
+gwt unlock <worktree>                    # git worktree unlock
+gwt move <worktree> <new-path>           # git worktree move
+gwt repair                               # git worktree repair
 ```
 
-Aliases: `ls` → `list`, `rm` → `remove`. Any unrecognized command is passed directly to `git worktree`.
+`ls` is an alias for `list`. Unrecognized commands are rejected — only the above are passed through.
 
 ### Version
 
