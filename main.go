@@ -399,6 +399,13 @@ const shellWrapper = `gwt() {
         command gwt "$@"
     fi
 }
+
+# Enable tab-completion for gwt
+if [ -n "${ZSH_VERSION:-}" ]; then
+    eval "$(command gwt completion zsh)"
+elif [ -n "${BASH_VERSION:-}" ]; then
+    eval "$(command gwt completion bash)"
+fi
 `
 
 var validVersionManagers = map[string]bool{"asdf": true, "mise": true}
@@ -538,7 +545,7 @@ func main() {
 		known := map[string]bool{
 			"init": true, "add": true, "clone": true, "remove": true, "rm": true,
 			"use": true, "version": true, "shell-init": true,
-			"help": true, "completion": true,
+			"help": true, "completion": true, "__complete": true,
 			"--help": true, "-h": true, "--version": true,
 		}
 
