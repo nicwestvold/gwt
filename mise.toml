@@ -24,6 +24,10 @@ run = "go mod tidy"
 description = "Generate coverage report"
 run = "go test -coverprofile=coverage.out ./... && go tool cover -html=coverage.out"
 
+[tasks.update]
+description = "Update gwt to the latest release"
+run = "go install github.com/nicwestvold/gwt@latest && gwt version"
+
 [tasks.install]
 description = "Install gwt binary"
 env = { GOBIN = "{{env.HOME}}/.local/bin" }
@@ -116,4 +120,11 @@ echo ""
 
 # Build and publish GitHub release
 GITHUB_TOKEN=$(gh auth token) goreleaser release --clean --release-notes <(echo "$NOTES")
+
+# Warm the Go module proxy so `go install @latest` resolves immediately
+echo ""
+echo "Warming Go module proxy..."
+curl -sf "https://proxy.golang.org/github.com/nicwestvold/gwt/@v/${TAG}.info" > /dev/null \
+  && echo "Go proxy updated for $TAG" \
+  || echo "warning: failed to warm Go proxy (try: go install github.com/nicwestvold/gwt@${TAG})"
 '''
