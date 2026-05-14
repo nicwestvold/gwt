@@ -94,7 +94,7 @@ func (r *Repo) Passthrough(args []string) error {
 // Remove removes a worktree. If no positional path argument is provided,
 // it auto-detects the current worktree directory. Returns the repo dir
 // (for cd-back) and the removed worktree path (for cleanup).
-func (r *Repo) Remove(args []string) (repoDir, worktreePath string, err error) {
+func (r *Repo) Remove(args []string, keepBranch bool) (repoDir, worktreePath string, err error) {
 	// Separate flags from positional args, respecting "--" separator.
 	var flags []string
 	var positional []string
@@ -174,7 +174,7 @@ func (r *Repo) Remove(args []string) (repoDir, worktreePath string, err error) {
 	}
 
 	// Best-effort branch deletion (non-force).
-	if branch != "" {
+	if !keepBranch && branch != "" {
 		delCmd := exec.Command("git", "branch", "-d", branch)
 		delCmd.Dir = r.Dir
 		delCmd.Stdout = os.Stdout

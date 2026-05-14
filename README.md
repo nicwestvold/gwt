@@ -140,6 +140,48 @@ gwt repair                               # git worktree repair
 
 `ls` is an alias for `list`. Unrecognized commands are rejected — only the above are passed through.
 
+### AI Coding Assistants
+
+gwt works well with AI coding tools like Claude Code, Codex, and similar agents that need isolated workspaces for parallel tasks.
+
+**Agent instructions snippet** — add to your project's `CLAUDE.md` or agent configuration:
+
+> This project uses `gwt` (git worktree wrapper). To work in an isolated worktree:
+> - `gwt add <branch>` — create a worktree (prints the path)
+> - `gwt add -b <new-branch>` — create a new branch in a worktree
+> - `gwt ls` — list all worktrees and their paths
+> - `gwt rm --keep-branch <branch>` — clean up without deleting the branch
+> - `gwt rm <branch>` — clean up and delete the branch
+>
+> Worktree paths are printed to stdout. In bare-repo layouts, worktrees are sibling directories next to `.bare/`. Agents run commands via exec (not the shell wrapper), so capture the printed path instead of relying on auto-cd.
+
+**Worktree layout:**
+
+```
+your-repo/
+├── .bare/              # bare git repo
+├── .git                # file pointing to .bare/
+├── main/               # worktree for main branch
+├── feature-branch/     # worktree (slashes become hyphens)
+└── pr-review-123/      # worktree for reviewing a PR
+```
+
+**Example workflows:**
+
+PR review:
+```bash
+gwt add pr-branch        # check out the PR branch
+# ... review the code ...
+gwt rm -k pr-branch      # clean up, keep the branch
+```
+
+Feature work:
+```bash
+gwt add -b feat/new-api  # new branch in its own worktree
+# ... implement ...
+gwt rm feat/new-api      # done, clean up branch too
+```
+
 ### Version
 
 ```bash
@@ -148,7 +190,7 @@ gwt version
 
 ## Requirements
 
-- **Go 1.25+** (for `go install`)
+- **Go 1.26+** (for `go install`)
 - **Git**
 - **bash or zsh** (for shell integration and hook execution)
 

@@ -257,6 +257,20 @@ installed via 'gwt init'.`,
 	},
 }
 
+func stripKeepBranch(args []string) (cleaned []string, keepBranch bool) {
+	for _, a := range args {
+		if a == "--keep-branch" || a == "-k" {
+			keepBranch = true
+		} else {
+			cleaned = append(cleaned, a)
+		}
+	}
+	if cleaned == nil {
+		cleaned = []string{}
+	}
+	return cleaned, keepBranch
+}
+
 var removeCmd = &cobra.Command{
 	Use:     "remove [flags] [<worktree>]",
 	Aliases: []string{"rm"},
@@ -269,6 +283,9 @@ it resolves to that worktree's path.
 After removal, the shell wrapper (from 'gwt shell-init') will cd back
 to the repository root.
 
+Flags:
+  -k, --keep-branch   Keep the branch after removing the worktree
+
 Supports all git worktree remove flags (e.g., --force).`,
 	DisableFlagParsing:    true,
 	ValidArgsFunction:     completeWorktreeBranches,
@@ -278,6 +295,8 @@ Supports all git worktree remove flags (e.g., --force).`,
 				return cmd.Help()
 			}
 		}
+
+		args, keepBranch := stripKeepBranch(args)
 
 		repo, err := git.NewRepo()
 		if err != nil {
@@ -296,7 +315,7 @@ Supports all git worktree remove flags (e.g., --force).`,
 			}
 		}
 
-		repoDir, worktreePath, err := repo.Remove(resolvedArgs)
+		repoDir, worktreePath, err := repo.Remove(resolvedArgs, keepBranch)
 		if err != nil {
 			return err
 		}

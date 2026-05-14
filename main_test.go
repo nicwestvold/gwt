@@ -44,6 +44,69 @@ func TestWorktreeBaseDir(t *testing.T) {
 	})
 }
 
+func TestStripKeepBranchFlag(t *testing.T) {
+	tests := []struct {
+		name           string
+		args           []string
+		wantArgs       []string
+		wantKeepBranch bool
+	}{
+		{
+			name:           "no flag",
+			args:           []string{"my-branch"},
+			wantArgs:       []string{"my-branch"},
+			wantKeepBranch: false,
+		},
+		{
+			name:           "long flag",
+			args:           []string{"--keep-branch", "my-branch"},
+			wantArgs:       []string{"my-branch"},
+			wantKeepBranch: true,
+		},
+		{
+			name:           "short flag",
+			args:           []string{"-k", "my-branch"},
+			wantArgs:       []string{"my-branch"},
+			wantKeepBranch: true,
+		},
+		{
+			name:           "flag after branch",
+			args:           []string{"my-branch", "--keep-branch"},
+			wantArgs:       []string{"my-branch"},
+			wantKeepBranch: true,
+		},
+		{
+			name:           "mixed with git flags",
+			args:           []string{"--force", "-k", "my-branch"},
+			wantArgs:       []string{"--force", "my-branch"},
+			wantKeepBranch: true,
+		},
+		{
+			name:           "no args just flag",
+			args:           []string{"--keep-branch"},
+			wantArgs:       []string{},
+			wantKeepBranch: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotArgs, gotKeep := stripKeepBranch(tt.args)
+			if gotKeep != tt.wantKeepBranch {
+				t.Errorf("keepBranch = %v, want %v", gotKeep, tt.wantKeepBranch)
+			}
+			if len(gotArgs) != len(tt.wantArgs) {
+				t.Fatalf("args = %v (len %d), want %v (len %d)", gotArgs, len(gotArgs), tt.wantArgs, len(tt.wantArgs))
+			}
+			for i := range gotArgs {
+				if gotArgs[i] != tt.wantArgs[i] {
+					t.Errorf("args[%d] = %q, want %q", i, gotArgs[i], tt.wantArgs[i])
+				}
+			}
+		})
+	}
+}
+
 func TestShellWrapperContainsCommands(t *testing.T) {
 	for _, cmd := range []string{"add", "clone", "rm", "remove", "use"} {
 		if !strings.Contains(shellWrapper, `"`+cmd+`"`) {
