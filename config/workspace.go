@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -34,6 +35,8 @@ func lastSegment(canonical string) string {
 
 // WorkspaceForRepo returns the workspace that lists the given canonical repo
 // name as a member (matched by canonical name or unique short segment).
+// Matching relies on lastSegment symmetry: a member stored as a full canonical
+// name still matches a short CanonicalName via its last segment.
 func (c *Config) WorkspaceForRepo(canonical string) (string, WorkspaceEntry, bool) {
 	short := lastSegment(canonical)
 	for name, ws := range c.Workspaces {
@@ -67,6 +70,7 @@ func (c *Config) resolveMember(ref string) (string, RepoEntry, error) {
 			matches = append(matches, name)
 		}
 	}
+	sort.Strings(matches)
 	switch len(matches) {
 	case 1:
 		return matches[0], c.Repos[matches[0]], nil

@@ -128,8 +128,21 @@ func TestResolveMembersErrors(t *testing.T) {
 	if _, err := cfg.ResolveMembers(WorkspaceEntry{Members: []string{"missing"}}); err == nil {
 		t.Error("expected error for unregistered member")
 	}
-	if _, err := cfg.ResolveMembers(WorkspaceEntry{Members: []string{"grafana"}}); err == nil {
+
+	_, ambiguousErr := cfg.ResolveMembers(WorkspaceEntry{Members: []string{"grafana"}})
+	if ambiguousErr == nil {
 		t.Error("expected error for ambiguous short match")
+	} else {
+		// Both matches must appear in sorted order so the message is deterministic.
+		msg := ambiguousErr.Error()
+		ia := strings.Index(msg, "a/grafana")
+		ib := strings.Index(msg, "b/grafana")
+		if ia < 0 || ib < 0 {
+			t.Errorf("ambiguous error should name both matches, got: %v", ambiguousErr)
+		}
+		if ia > ib {
+			t.Errorf("ambiguous error names should appear in sorted order (a/grafana before b/grafana), got: %v", ambiguousErr)
+		}
 	}
 }
 

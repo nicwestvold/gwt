@@ -192,6 +192,88 @@ func TestRunWorkspaceAdd(t *testing.T) {
 	}
 }
 
+func TestPartitionRemoveArgs(t *testing.T) {
+	tests := []struct {
+		name           string
+		args           []string
+		wantForce      bool
+		wantPositional []string
+	}{
+		{
+			name:           "no args",
+			args:           []string{},
+			wantForce:      false,
+			wantPositional: nil,
+		},
+		{
+			name:           "force long flag only",
+			args:           []string{"--force"},
+			wantForce:      true,
+			wantPositional: nil,
+		},
+		{
+			name:           "force short flag only",
+			args:           []string{"-f"},
+			wantForce:      true,
+			wantPositional: nil,
+		},
+		{
+			name:           "force with value",
+			args:           []string{"--force=true"},
+			wantForce:      true,
+			wantPositional: nil,
+		},
+		{
+			name:           "positional branch",
+			args:           []string{"feat/x"},
+			wantForce:      false,
+			wantPositional: []string{"feat/x"},
+		},
+		{
+			name:           "force and positional",
+			args:           []string{"--force", "feat/x"},
+			wantForce:      true,
+			wantPositional: []string{"feat/x"},
+		},
+		{
+			name:           "double dash separator",
+			args:           []string{"--force", "--", "feat/x"},
+			wantForce:      true,
+			wantPositional: []string{"feat/x"},
+		},
+		{
+			name:           "args after double dash treated as positionals",
+			args:           []string{"--", "--force"},
+			wantForce:      false,
+			wantPositional: []string{"--force"},
+		},
+		{
+			name:           "other flag not force",
+			args:           []string{"--keep-branch"},
+			wantForce:      false,
+			wantPositional: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotForce, gotPos := partitionRemoveArgs(tt.args)
+			if gotForce != tt.wantForce {
+				t.Errorf("force = %v, want %v", gotForce, tt.wantForce)
+			}
+			if len(gotPos) != len(tt.wantPositional) {
+				t.Fatalf("positionals = %v (len %d), want %v (len %d)",
+					gotPos, len(gotPos), tt.wantPositional, len(tt.wantPositional))
+			}
+			for i := range gotPos {
+				if gotPos[i] != tt.wantPositional[i] {
+					t.Errorf("positionals[%d] = %q, want %q", i, gotPos[i], tt.wantPositional[i])
+				}
+			}
+		})
+	}
+}
+
 func TestRunWorkspaceRemove(t *testing.T) {
 	root := t.TempDir()
 	primary := filepath.Join(root, "grafana")

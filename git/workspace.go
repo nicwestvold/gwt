@@ -100,6 +100,8 @@ func RemoveMemberWorktree(repoDir, worktreePath string, keepBranch, force bool) 
 }
 
 // RunSetup runs a shell command in dir, streaming stdio.
+// command is trusted configuration from the user's own config.toml (same trust
+// level as a git hook) — NOT untrusted input; no sanitization is needed.
 func RunSetup(command, dir string) error {
 	cmd := exec.Command("sh", "-c", command)
 	cmd.Dir = dir

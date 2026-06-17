@@ -274,6 +274,32 @@ installed via 'gwt init'.`,
 	},
 }
 
+// partitionRemoveArgs separates flags from positional arguments for the remove
+// command. It sets force true when a flag is -f, --force, or starts with
+// --force=. A -- separator causes all subsequent args to be treated as
+// positionals, mirroring the style used by buildAddArgs and Remove.
+func partitionRemoveArgs(args []string) (force bool, positionals []string) {
+	pastSeparator := false
+	for _, a := range args {
+		if pastSeparator {
+			positionals = append(positionals, a)
+			continue
+		}
+		if a == "--" {
+			pastSeparator = true
+			continue
+		}
+		if a == "-f" || a == "--force" || strings.HasPrefix(a, "--force=") {
+			force = true
+		} else if strings.HasPrefix(a, "-") {
+			// other flag; ignore for force detection
+		} else {
+			positionals = append(positionals, a)
+		}
+	}
+	return force, positionals
+}
+
 func stripKeepBranch(args []string) (cleaned []string, keepBranch bool) {
 	for _, a := range args {
 		if a == "--keep-branch" || a == "-k" {
@@ -321,21 +347,19 @@ Supports all git worktree remove flags (e.g., --force).`,
 		}
 
 		// Workspace teardown: if this repo is a workspace member, remove the
-		// whole branch group.
+		// whole branch group based on the current worktree.
 		if canonical, nameErr := repo.CanonicalName(); nameErr == nil {
 			if cfg, cfgErr := config.Load(); cfgErr == nil {
 				if wsName, ws, ok := cfg.WorkspaceForRepo(canonical); ok {
-					force := false
-					for _, a := range args {
-						if a == "--force" || a == "-f" {
-							force = true
-						}
+					force, positionals := partitionRemoveArgs(args)
+					if len(positionals) > 0 {
+						return fmt.Errorf("workspace removal operates on the current worktree; cd into the member worktree to remove and run `gwt rm` (got %q)", positionals[0])
 					}
 					var buf bytes.Buffer
 					tl := exec.Command("git", "rev-parse", "--show-toplevel")
 					tl.Stdout = &buf
 					if tl.Run() != nil {
-						return fmt.Errorf("not inside a worktree")
+						return fmt.Errorf("not inside a git worktree — cd into a member worktree first")
 					}
 					current := strings.TrimSpace(buf.String())
 					cd, rmErr := runWorkspaceRemove(cfg, wsName, ws, current, keepBranch, force)
