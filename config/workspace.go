@@ -25,7 +25,7 @@ type WorkspaceEntry struct {
 }
 
 // lastSegment returns the final path segment of a canonical name,
-// e.g. "grafana/grafana-enterprise" -> "grafana-enterprise".
+// e.g. "owner/repo" -> "repo".
 func lastSegment(canonical string) string {
 	if i := strings.LastIndex(canonical, "/"); i >= 0 {
 		return canonical[i+1:]
@@ -51,7 +51,7 @@ func (c *Config) WorkspaceForRepo(canonical string) (string, WorkspaceEntry, boo
 
 // ResolvedMember is a workspace member resolved to a concrete repo on disk.
 type ResolvedMember struct {
-	Name       string // canonical name as registered, e.g. "grafana/grafana"
+	Name       string // canonical name as registered, e.g. "owner/repo"
 	Short      string // last segment, used as the sibling directory name
 	Path       string // repo path on disk
 	MainBranch string // defaults to "main"
