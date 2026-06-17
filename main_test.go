@@ -1,10 +1,13 @@
 package main
 
 import (
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/nicwestvold/gwt/config"
 	"github.com/nicwestvold/gwt/git"
 )
 
@@ -112,5 +115,116 @@ func TestShellWrapperContainsCommands(t *testing.T) {
 		if !strings.Contains(shellWrapper, `"`+cmd+`"`) {
 			t.Errorf("shellWrapper missing command %q", cmd)
 		}
+	}
+}
+
+func mainTestInitRepo(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := append(os.Environ(),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+	)
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = env
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+	run("init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(dir, "README"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-m", "init")
+}
+
+func TestRunWorkspaceAdd(t *testing.T) {
+	root := t.TempDir()
+	primary := filepath.Join(root, "grafana")
+	follower := filepath.Join(root, "grafana-enterprise")
+	mainTestInitRepo(t, primary)
+	mainTestInitRepo(t, follower)
+
+	wtRoot := filepath.Join(root, "worktrees")
+	cfg := &config.Config{
+		Repos: map[string]config.RepoEntry{
+			"grafana/grafana":            {Path: primary, MainBranch: "main"},
+			"grafana/grafana-enterprise": {Path: follower, MainBranch: "main"},
+		},
+	}
+	ws := config.WorkspaceEntry{
+		Members:      []string{"grafana", "grafana-enterprise"},
+		Primary:      "grafana",
+		Setup:        "touch setup-ran",
+		SetupCwd:     "grafana",
+		WorktreeRoot: wtRoot,
+	}
+
+	cd, err := runWorkspaceAdd(cfg, "grafana", ws, []string{"-b", "feat/x"})
+	if err != nil {
+		t.Fatalf("runWorkspaceAdd error: %v", err)
+	}
+
+	group := filepath.Join(wtRoot, "feat-x")
+	if cd != filepath.Join(group, "grafana") {
+		t.Errorf("cd = %q, want %q", cd, filepath.Join(group, "grafana"))
+	}
+	for _, short := range []string{"grafana", "grafana-enterprise"} {
+		if _, err := os.Stat(filepath.Join(group, short, "README")); err != nil {
+			t.Errorf("missing worktree for %s: %v", short, err)
+		}
+	}
+	// Setup ran in the primary worktree.
+	if _, err := os.Stat(filepath.Join(group, "grafana", "setup-ran")); err != nil {
+		t.Errorf("setup did not run in primary: %v", err)
+	}
+	// Follower is on the mirrored branch.
+	cmd := exec.Command("git", "-C", filepath.Join(group, "grafana-enterprise"), "rev-parse", "--abbrev-ref", "HEAD")
+	out, _ := cmd.Output()
+	if got := string(out); got != "feat/x\n" {
+		t.Errorf("follower branch = %q, want feat/x", got)
+	}
+}
+
+func TestRunWorkspaceRemove(t *testing.T) {
+	root := t.TempDir()
+	primary := filepath.Join(root, "grafana")
+	follower := filepath.Join(root, "grafana-enterprise")
+	mainTestInitRepo(t, primary)
+	mainTestInitRepo(t, follower)
+
+	wtRoot := filepath.Join(root, "worktrees")
+	cfg := &config.Config{
+		Repos: map[string]config.RepoEntry{
+			"grafana/grafana":            {Path: primary, MainBranch: "main"},
+			"grafana/grafana-enterprise": {Path: follower, MainBranch: "main"},
+		},
+	}
+	ws := config.WorkspaceEntry{
+		Members:      []string{"grafana", "grafana-enterprise"},
+		Primary:      "grafana",
+		WorktreeRoot: wtRoot,
+	}
+
+	if _, err := runWorkspaceAdd(cfg, "grafana", ws, []string{"-b", "feat/x"}); err != nil {
+		t.Fatalf("setup add failed: %v", err)
+	}
+
+	group := filepath.Join(wtRoot, "feat-x")
+	cd, err := runWorkspaceRemove(cfg, "grafana", ws, filepath.Join(group, "grafana"), false, false)
+	if err != nil {
+		t.Fatalf("runWorkspaceRemove error: %v", err)
+	}
+	if cd != primary {
+		t.Errorf("cd = %q, want %q (primary real repo)", cd, primary)
+	}
+	if _, err := os.Stat(group); !os.IsNotExist(err) {
+		t.Error("group dir still present after remove")
 	}
 }

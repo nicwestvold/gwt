@@ -249,106 +249,118 @@ func (r *Repo) Add(args []string, baseDir string) (string, error) {
 	return worktreePath, nil
 }
 
-func branchToDir(branch string) string {
+// BranchToDir converts a branch name into a filesystem-safe directory name.
+func BranchToDir(branch string) string {
 	return strings.ReplaceAll(branch, "/", "-")
 }
 
-// buildAddArgs parses user args and returns transformed args for git worktree add
-// plus the derived worktree path.
-func buildAddArgs(args []string, baseDir string) (gitArgs []string, worktreePath string, err error) {
+// AddArgs is the parsed form of `git worktree add` arguments.
+type AddArgs struct {
+	Flags      []string // all flags, including any branch flag + its value
+	BranchFlag string   // "-b", "-B", "--orphan", or "" when checking out an existing branch
+	Branch     string   // the branch name
+	Extra      []string // trailing positionals (e.g. a start-point) when BranchFlag is set
+}
+
+// ParseAddArgs parses user-supplied `gwt add` arguments into AddArgs.
+func ParseAddArgs(args []string) (AddArgs, error) {
 	if len(args) == 0 {
-		return nil, "", fmt.Errorf("requires a branch name")
+		return AddArgs{}, fmt.Errorf("requires a branch name")
 	}
 
-	valueFlags := map[string]bool{
-		"-b": true, "-B": true, "--orphan": true, "--reason": true,
-	}
-	branchFlags := map[string]bool{
-		"-b": true, "-B": true, "--orphan": true,
-	}
+	valueFlags := map[string]bool{"-b": true, "-B": true, "--orphan": true, "--reason": true}
+	branchFlags := map[string]bool{"-b": true, "-B": true, "--orphan": true}
 
 	var flags []string
 	var positional []string
-	var branchFlag string
-	var branchValue string
+	var branchFlag, branchValue string
 	pastFlags := false
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-
 		if pastFlags {
 			positional = append(positional, arg)
 			continue
 		}
-
 		if arg == "--" {
 			pastFlags = true
 			continue
 		}
-
-		// Handle --flag=value syntax
 		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "=") {
 			parts := strings.SplitN(arg, "=", 2)
 			if branchFlags[parts[0]] {
-				branchFlag = parts[0]
-				branchValue = parts[1]
+				branchFlag, branchValue = parts[0], parts[1]
 			}
 			flags = append(flags, arg)
 			continue
 		}
-
+		// Support "-b=value" shorthand.
+		if strings.HasPrefix(arg, "-") && strings.Contains(arg, "=") {
+			parts := strings.SplitN(arg, "=", 2)
+			if branchFlags[parts[0]] {
+				branchFlag, branchValue = parts[0], parts[1]
+				flags = append(flags, arg)
+				continue
+			}
+		}
 		if valueFlags[arg] {
 			if i+1 >= len(args) {
-				return nil, "", fmt.Errorf("%s requires a value", arg)
+				return AddArgs{}, fmt.Errorf("%s requires a value", arg)
 			}
 			if branchFlags[arg] {
-				branchFlag = arg
-				branchValue = args[i+1]
+				branchFlag, branchValue = arg, args[i+1]
 			}
 			flags = append(flags, arg, args[i+1])
 			i++
 			continue
 		}
-
 		if strings.HasPrefix(arg, "-") {
 			flags = append(flags, arg)
 			continue
 		}
-
 		positional = append(positional, arg)
 	}
 
-	var branch string
+	a := AddArgs{Flags: flags, BranchFlag: branchFlag}
 	if branchFlag != "" {
-		branch = branchValue
+		a.Branch = branchValue
 		if len(positional) > 1 {
-			return nil, "", fmt.Errorf("too many positional arguments")
+			return AddArgs{}, fmt.Errorf("too many positional arguments")
 		}
+		a.Extra = positional
 	} else {
 		if len(positional) == 0 {
-			return nil, "", fmt.Errorf("requires a branch name")
+			return AddArgs{}, fmt.Errorf("requires a branch name")
 		}
 		if len(positional) > 1 {
-			return nil, "", fmt.Errorf("too many positional arguments")
+			return AddArgs{}, fmt.Errorf("too many positional arguments")
 		}
-		branch = positional[0]
+		a.Branch = positional[0]
 	}
+	return a, nil
+}
 
-	dir := branchToDir(branch)
-	worktreePath = filepath.Join(baseDir, dir)
-
-	if branchFlag != "" {
-		// flags... worktreePath [start-point]
-		gitArgs = append(gitArgs, flags...)
-		gitArgs = append(gitArgs, worktreePath)
-		gitArgs = append(gitArgs, positional...)
+// Build produces the `git worktree add` argument list for a given worktree path.
+func (a AddArgs) Build(worktreePath string) []string {
+	out := append([]string{}, a.Flags...)
+	if a.BranchFlag != "" {
+		out = append(out, worktreePath)
+		out = append(out, a.Extra...)
 	} else {
-		// flags... worktreePath branch
-		gitArgs = append(gitArgs, flags...)
-		gitArgs = append(gitArgs, worktreePath, branch)
+		out = append(out, worktreePath, a.Branch)
 	}
+	return out
+}
 
-	return gitArgs, worktreePath, nil
+// buildAddArgs parses user args and returns transformed args for git worktree add
+// plus the derived worktree path (worktree dir derived from the branch name).
+func buildAddArgs(args []string, baseDir string) (gitArgs []string, worktreePath string, err error) {
+	a, err := ParseAddArgs(args)
+	if err != nil {
+		return nil, "", err
+	}
+	worktreePath = filepath.Join(baseDir, BranchToDir(a.Branch))
+	return a.Build(worktreePath), worktreePath, nil
 }
 
 func repoName(url string) string {

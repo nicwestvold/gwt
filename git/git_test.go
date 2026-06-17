@@ -23,9 +23,9 @@ func TestBranchToDir(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.branch, func(t *testing.T) {
-			got := branchToDir(tt.branch)
+			got := BranchToDir(tt.branch)
 			if got != tt.want {
-				t.Errorf("branchToDir(%q) = %q, want %q", tt.branch, got, tt.want)
+				t.Errorf("BranchToDir(%q) = %q, want %q", tt.branch, got, tt.want)
 			}
 		})
 	}
@@ -899,6 +899,74 @@ func TestListWorktrees(t *testing.T) {
 	if ok {
 		t.Error("FindWorktreeByBranch('nonexistent') returned true, want false")
 	}
+}
+
+func TestParseAddArgs(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantBranch string
+		wantFlag   string
+		wantExtra  []string
+		wantErr    bool
+	}{
+		{"existing branch", []string{"fix/login"}, "fix/login", "", nil, false},
+		{"new branch", []string{"-b", "feat/x"}, "feat/x", "-b", nil, false},
+		{"new branch with start-point", []string{"-b", "feat/x", "origin/main"}, "feat/x", "-b", []string{"origin/main"}, false},
+		{"flag equals form", []string{"-b=feat/y"}, "feat/y", "-b", nil, false},
+		{"no args", []string{}, "", "", nil, true},
+		{"too many positional", []string{"a", "b"}, "", "", nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseAddArgs(tt.args)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Branch != tt.wantBranch || got.BranchFlag != tt.wantFlag {
+				t.Errorf("branch=%q flag=%q, want %q / %q", got.Branch, got.BranchFlag, tt.wantBranch, tt.wantFlag)
+			}
+			if len(got.Extra) != len(tt.wantExtra) {
+				t.Errorf("extra=%v, want %v", got.Extra, tt.wantExtra)
+			}
+		})
+	}
+}
+
+func TestAddArgsBuild(t *testing.T) {
+	// New branch: flags + worktreePath + extra
+	a, _ := ParseAddArgs([]string{"-b", "feat/x", "origin/main"})
+	got := a.Build("/wt/grafana")
+	want := []string{"-b", "feat/x", "/wt/grafana", "origin/main"}
+	if !equalStrings(got, want) {
+		t.Errorf("Build new = %v, want %v", got, want)
+	}
+
+	// Existing branch: flags + worktreePath + branch
+	b, _ := ParseAddArgs([]string{"fix/login"})
+	got = b.Build("/wt/grafana")
+	want = []string{"/wt/grafana", "fix/login"}
+	if !equalStrings(got, want) {
+		t.Errorf("Build existing = %v, want %v", got, want)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // exitState creates an *os.ProcessState with the given exit code by running a

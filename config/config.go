@@ -21,7 +21,8 @@ type RepoEntry struct {
 
 // Config is the top-level gwt configuration, keyed by canonical repo name.
 type Config struct {
-	Repos map[string]RepoEntry `toml:"repos"`
+	Repos      map[string]RepoEntry      `toml:"repos"`
+	Workspaces map[string]WorkspaceEntry `toml:"workspaces,omitempty"`
 }
 
 func ConfigDir() (string, error) {
@@ -55,7 +56,10 @@ func configPath() (string, error) {
 }
 
 func Load() (*Config, error) {
-	cfg := &Config{Repos: make(map[string]RepoEntry)}
+	cfg := &Config{
+		Repos:      make(map[string]RepoEntry),
+		Workspaces: make(map[string]WorkspaceEntry),
+	}
 	p, err := configPath()
 	if err != nil {
 		return nil, err
@@ -72,6 +76,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.Repos == nil {
 		cfg.Repos = make(map[string]RepoEntry)
+	}
+	if cfg.Workspaces == nil {
+		cfg.Workspaces = make(map[string]WorkspaceEntry)
 	}
 	return cfg, nil
 }

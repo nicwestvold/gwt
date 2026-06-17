@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
@@ -235,6 +237,21 @@ installed via 'gwt init'.`,
 			return err
 		}
 
+		// Workspace fan-out: if this repo is a workspace member, create
+		// worktrees for all members instead of the single-repo flow.
+		if canonical, nameErr := repo.CanonicalName(); nameErr == nil {
+			if cfg, cfgErr := config.Load(); cfgErr == nil {
+				if wsName, ws, ok := cfg.WorkspaceForRepo(canonical); ok {
+					cd, addErr := runWorkspaceAdd(cfg, wsName, ws, args)
+					if addErr != nil {
+						return addErr
+					}
+					git.WriteCdFile(cd)
+					return nil
+				}
+			}
+		}
+
 		baseDir, canonicalName, err := worktreeBaseDir(repo)
 		if err != nil {
 			return err
@@ -301,6 +318,34 @@ Supports all git worktree remove flags (e.g., --force).`,
 		repo, err := git.NewRepo()
 		if err != nil {
 			return err
+		}
+
+		// Workspace teardown: if this repo is a workspace member, remove the
+		// whole branch group.
+		if canonical, nameErr := repo.CanonicalName(); nameErr == nil {
+			if cfg, cfgErr := config.Load(); cfgErr == nil {
+				if wsName, ws, ok := cfg.WorkspaceForRepo(canonical); ok {
+					force := false
+					for _, a := range args {
+						if a == "--force" || a == "-f" {
+							force = true
+						}
+					}
+					var buf bytes.Buffer
+					tl := exec.Command("git", "rev-parse", "--show-toplevel")
+					tl.Stdout = &buf
+					if tl.Run() != nil {
+						return fmt.Errorf("not inside a worktree")
+					}
+					current := strings.TrimSpace(buf.String())
+					cd, rmErr := runWorkspaceRemove(cfg, wsName, ws, current, keepBranch, force)
+					if rmErr != nil {
+						return rmErr
+					}
+					git.WriteCdFile(cd)
+					return nil
+				}
+			}
 		}
 
 		// Resolve branch names to worktree paths.
@@ -512,6 +557,112 @@ func registerRepo(repo *git.Repo, opts hookOptions) error {
 
 	fmt.Printf("Registered %s in config\n", name)
 	return nil
+}
+
+// memberSetupDir returns the absolute path of the worktree whose short name
+// matches ref (the setup_cwd), defaulting to the primary's worktree.
+func memberSetupDir(group string, members []config.ResolvedMember, ref string) string {
+	for _, m := range members {
+		if ref != "" && (m.Short == ref || m.Name == ref) {
+			return filepath.Join(group, m.Short)
+		}
+	}
+	for _, m := range members {
+		if m.IsPrimary {
+			return filepath.Join(group, m.Short)
+		}
+	}
+	return filepath.Join(group, members[0].Short)
+}
+
+// runWorkspaceAdd creates a worktree for every workspace member under a shared
+// per-branch group directory, mirroring the branch to followers, then runs the
+// workspace setup command. Returns the primary worktree path to cd into.
+func runWorkspaceAdd(cfg *config.Config, wsName string, ws config.WorkspaceEntry, args []string) (string, error) {
+	members, err := cfg.ResolveMembers(ws)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := git.ParseAddArgs(args)
+	if err != nil {
+		return "", err
+	}
+	root, err := ws.ResolveWorktreeRoot(wsName)
+	if err != nil {
+		return "", err
+	}
+	group := filepath.Join(root, git.BranchToDir(parsed.Branch))
+	if err := os.MkdirAll(group, 0o755); err != nil {
+		return "", fmt.Errorf("failed to create group dir: %w", err)
+	}
+
+	var created []string
+	for _, m := range members {
+		worktreePath := filepath.Join(group, m.Short)
+		var gitArgs []string
+		if m.IsPrimary {
+			gitArgs = parsed.Build(worktreePath)
+		} else if git.BranchExists(m.Path, parsed.Branch) {
+			gitArgs = []string{worktreePath, parsed.Branch}
+		} else {
+			gitArgs = []string{"-b", parsed.Branch, worktreePath, git.MainBranchRef(m.Path, m.MainBranch)}
+		}
+		if err := git.AddWorktreeAt(m.Path, gitArgs); err != nil {
+			return "", fmt.Errorf("creating worktree for %s failed: %w\ncreated so far: %v\nrun `gwt rm` from one of them to unwind", m.Name, err, created)
+		}
+		created = append(created, worktreePath)
+		fmt.Printf("worktree: %s @ %s\n", worktreePath, parsed.Branch)
+	}
+
+	if ws.Setup != "" {
+		setupDir := memberSetupDir(group, members, ws.SetupCwd)
+		fmt.Printf("running setup: %s (in %s)\n", ws.Setup, setupDir)
+		if err := git.RunSetup(ws.Setup, setupDir); err != nil {
+			return "", err
+		}
+	}
+
+	for _, m := range members {
+		if m.IsPrimary {
+			return filepath.Join(group, m.Short), nil
+		}
+	}
+	return filepath.Join(group, members[0].Short), nil
+}
+
+// runWorkspaceRemove removes every member worktree in the branch group that
+// currentWorktree belongs to, then cleans the empty group dir. Returns the
+// primary's real repo path to cd back into.
+func runWorkspaceRemove(cfg *config.Config, wsName string, ws config.WorkspaceEntry, currentWorktree string, keepBranch, force bool) (string, error) {
+	members, err := cfg.ResolveMembers(ws)
+	if err != nil {
+		return "", err
+	}
+	group := filepath.Dir(currentWorktree)
+
+	for _, m := range members {
+		worktreePath := filepath.Join(group, m.Short)
+		if _, statErr := os.Stat(worktreePath); statErr != nil {
+			continue // member worktree absent; skip
+		}
+		if err := git.RemoveMemberWorktree(m.Path, worktreePath, keepBranch, force); err != nil {
+			return "", err
+		}
+	}
+
+	root, err := ws.ResolveWorktreeRoot(wsName)
+	if err == nil {
+		_ = os.Remove(group)
+		git.CleanEmptyParents(group, root)
+	}
+
+	primaryPath := members[0].Path
+	for _, m := range members {
+		if m.IsPrimary {
+			primaryPath = m.Path
+		}
+	}
+	return primaryPath, nil
 }
 
 // ensureRegistered adds the repo to the config if not already present.

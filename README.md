@@ -125,6 +125,35 @@ gwt use my-feature                       # cd into the worktree for this branch
 
 Finds the worktree checked out on the given branch and switches to it. Requires shell integration for the auto-cd.
 
+### Workspaces
+
+For codebases split across mutually-dependent sibling repos (e.g.
+`grafana` + `grafana-enterprise`, which must sit next to each other so
+`../grafana-enterprise` resolves), define a **workspace** in
+`~/.config/gwt/config.toml`. Both repos must already be registered (via
+`gwt init`/`gwt clone`).
+
+```toml
+[workspaces.grafana]
+members       = ["grafana", "grafana-enterprise"]  # repos, by name; first is primary
+primary       = "grafana"                            # cd target; followers mirror its branch
+setup         = "make enterprise-dev"                # optional; runs after all worktrees exist
+setup_cwd     = "grafana"                            # member dir the setup runs in (default: primary)
+worktree_root = "~/Development/grafana/code/.worktrees"  # optional; default: gwt data dir
+```
+
+Then, from inside any member:
+
+```bash
+gwt add -b feat/x   # creates <root>/feat-x/grafana and <root>/feat-x/grafana-enterprise
+                    # on branch feat/x, then runs setup; cd's into the primary
+gwt rm              # removes the whole group's worktrees and cd's back to the primary repo
+```
+
+Followers mirror the branch: an existing branch is checked out, otherwise it is
+created from the member's main branch. `gwt rm -k`/`--keep-branch` keeps each
+member's branch.
+
 ### Pass-through
 
 These git worktree subcommands are forwarded directly:
