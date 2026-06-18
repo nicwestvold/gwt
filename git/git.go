@@ -525,6 +525,79 @@ func parseWorktreeList(output string) []WorktreeEntry {
 	return entries
 }
 
+// renderWorktreeList annotates plain `git worktree list` output, marking the
+// line for activePath with a "* " prefix (green when color is true) and
+// indenting all other lines with two spaces to keep paths aligned. A line is
+// considered active when its path field exactly matches activePath; the
+// trailing-space check prevents a shared prefix (e.g. /a/b vs /a/bc) from
+// matching the wrong worktree.
+func renderWorktreeList(plain, activePath string, color bool) string {
+	const green = "\033[32m"
+	const reset = "\033[0m"
+
+	plain = strings.TrimRight(plain, "\n")
+	if plain == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	for _, line := range strings.Split(plain, "\n") {
+		active := activePath != "" &&
+			(line == activePath || strings.HasPrefix(line, activePath+" "))
+		switch {
+		case active && color:
+			b.WriteString(green + "* " + line + reset + "\n")
+		case active:
+			b.WriteString("* " + line + "\n")
+		default:
+			b.WriteString("  " + line + "\n")
+		}
+	}
+	return b.String()
+}
+
+// PrintWorktreeList writes `git worktree list` to stdout with the worktree
+// containing the caller's current directory marked. Color is enabled only on a
+// terminal and when NO_COLOR is unset.
+func (r *Repo) PrintWorktreeList() error {
+	var buf, stderr bytes.Buffer
+	cmd := exec.Command("git", "worktree", "list")
+	cmd.Dir = r.Dir
+	cmd.Stdout = &buf
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git worktree list failed: %w (%s)", err, strings.TrimSpace(stderr.String()))
+	}
+
+	fmt.Print(renderWorktreeList(buf.String(), currentWorktreeTop(), shouldColor()))
+	return nil
+}
+
+// currentWorktreeTop returns the top-level path of the worktree containing the
+// process's current directory, or "" when not inside a worktree.
+func currentWorktreeTop() string {
+	var buf bytes.Buffer
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Stdout = &buf
+	if cmd.Run() != nil {
+		return ""
+	}
+	return strings.TrimSpace(buf.String())
+}
+
+// shouldColor reports whether colored output should be emitted: true only when
+// stdout is a terminal and NO_COLOR is unset.
+func shouldColor() bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
 // FindWorktreeByBranch returns the path of the worktree checked out on the given branch.
 func (r *Repo) FindWorktreeByBranch(branch string) (string, bool, error) {
 	entries, err := r.ListWorktrees()

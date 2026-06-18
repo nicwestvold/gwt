@@ -969,6 +969,70 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
+func TestRenderWorktreeList(t *testing.T) {
+	const green = "\033[32m"
+	const reset = "\033[0m"
+
+	plain := "/repo/main abc123 [main]\n" +
+		"/repo/feat-foo def456 [feat/foo]\n"
+
+	tests := []struct {
+		name       string
+		plain      string
+		activePath string
+		color      bool
+		want       string
+	}{
+		{
+			name:       "marks active line with color",
+			plain:      plain,
+			activePath: "/repo/feat-foo",
+			color:      true,
+			want: "  /repo/main abc123 [main]\n" +
+				green + "* /repo/feat-foo def456 [feat/foo]" + reset + "\n",
+		},
+		{
+			name:       "marks active line without color",
+			plain:      plain,
+			activePath: "/repo/feat-foo",
+			color:      false,
+			want: "  /repo/main abc123 [main]\n" +
+				"* /repo/feat-foo def456 [feat/foo]\n",
+		},
+		{
+			name:       "no active path indents every line",
+			plain:      plain,
+			activePath: "",
+			color:      true,
+			want: "  /repo/main abc123 [main]\n" +
+				"  /repo/feat-foo def456 [feat/foo]\n",
+		},
+		{
+			name:       "shared path prefix does not false-match",
+			plain:      "/repo/feat abc123 [feat]\n/repo/feature def456 [feature]\n",
+			activePath: "/repo/feat",
+			color:      false,
+			want:       "* /repo/feat abc123 [feat]\n  /repo/feature def456 [feature]\n",
+		},
+		{
+			name:       "empty plain output yields empty string",
+			plain:      "",
+			activePath: "/repo/main",
+			color:      true,
+			want:       "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := renderWorktreeList(tt.plain, tt.activePath, tt.color)
+			if got != tt.want {
+				t.Errorf("renderWorktreeList() =\n%q\nwant\n%q", got, tt.want)
+			}
+		})
+	}
+}
+
 // exitState creates an *os.ProcessState with the given exit code by running a
 // subprocess that exits with that code.
 func exitState(t *testing.T, code int) *os.ProcessState {

@@ -65,6 +65,7 @@ Additional commands:
 
 Enhanced commands:
   add        Create a worktree (setup handled by post-checkout hook)
+  list/ls    List worktrees, marking the active one with '*' (green on a TTY)
   remove/rm  Remove a worktree by path or branch name (auto-cd back)
   use        Switch to an existing worktree by branch name`,
 }
@@ -755,6 +756,16 @@ func main() {
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "error: %v\n", err)
 					os.Exit(1)
+				}
+				// Enhance the bare `gwt list` (and its `ls` alias) by marking
+				// the active worktree. Any extra flags/args (e.g. --porcelain)
+				// fall through to plain git so scripting behavior is preserved.
+				if subcmd == "list" && len(os.Args) == 2 {
+					if err := repo.PrintWorktreeList(); err != nil {
+						fmt.Fprintf(os.Stderr, "error: %v\n", err)
+						os.Exit(git.ExitCode(err))
+					}
+					return
 				}
 				if err := repo.Passthrough(os.Args[1:]); err != nil {
 					os.Exit(git.ExitCode(err))
