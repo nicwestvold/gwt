@@ -11,15 +11,15 @@ func TestParseCanonicalName(t *testing.T) {
 		url  string
 		want string
 	}{
-		{"https://github.com/grafana/metrics-drilldown.git", "grafana/metrics-drilldown"},
-		{"https://github.com/grafana/metrics-drilldown", "grafana/metrics-drilldown"},
-		{"https://github.com/grafana/metrics-drilldown/", "grafana/metrics-drilldown"},
-		{"https://github.com/grafana/metrics-drilldown.git/", "grafana/metrics-drilldown"},
-		{"git@github.com:grafana/metrics-drilldown.git", "grafana/metrics-drilldown"},
-		{"git@github.com:grafana/metrics-drilldown", "grafana/metrics-drilldown"},
-		{"ssh://git@github.com/grafana/metrics-drilldown.git", "grafana/metrics-drilldown"},
-		{"ssh://git@github.com/grafana/metrics-drilldown", "grafana/metrics-drilldown"},
-		{"ssh://git@github.com:22/grafana/metrics-drilldown.git", "grafana/metrics-drilldown"},
+		{"https://github.com/acme/dashboard.git", "acme/dashboard"},
+		{"https://github.com/acme/dashboard", "acme/dashboard"},
+		{"https://github.com/acme/dashboard/", "acme/dashboard"},
+		{"https://github.com/acme/dashboard.git/", "acme/dashboard"},
+		{"git@github.com:acme/dashboard.git", "acme/dashboard"},
+		{"git@github.com:acme/dashboard", "acme/dashboard"},
+		{"ssh://git@github.com/acme/dashboard.git", "acme/dashboard"},
+		{"ssh://git@github.com/acme/dashboard", "acme/dashboard"},
+		{"ssh://git@github.com:22/acme/dashboard.git", "acme/dashboard"},
 		// GitLab nested groups: only last two segments are preserved (intentional).
 		{"https://gitlab.com/org/subgroup/repo.git", "subgroup/repo"},
 		{"git@gitlab.com:org/subgroup/repo.git", "subgroup/repo"},

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let `gwt add`/`gwt remove` fan out across a configured group of sibling repos (a "workspace"), so coupled codebases like `grafana` + `grafana-enterprise` get matched worktrees laid out as siblings plus a cross-repo setup step.
+**Goal:** Let `gwt add`/`gwt remove` fan out across a configured group of sibling repos (a "workspace"), so coupled codebases like `app` + `app-plugins` get matched worktrees laid out as siblings plus a cross-repo setup step.
 
 **Architecture:** A new `[workspaces.<name>]` config table lists member repos (resolved against the existing `[repos]` registry). `gwt add` detects whether the current repo is a workspace member; if so it creates one worktree per member under a shared per-branch directory, mirrors the branch to followers, then runs a configurable `setup` command. `gwt remove` tears the whole group down. No workspace configured ⇒ existing single-repo behavior is untouched.
 
@@ -14,7 +14,7 @@
 - No new third-party dependencies.
 - Tests use stdlib `testing`, `t.TempDir()`, `t.Setenv`. Git integration tests in package `git` use the existing `testRunGit`/`testGitEnv` helpers (`git/testhelper_test.go`).
 - Backward compatibility: with no `[workspaces]` table, all existing behavior is byte-for-byte unchanged.
-- Member worktree directory name = the member repo's canonical-name **last segment** (e.g. `grafana-enterprise`), so relative paths like `../grafana-enterprise` resolve.
+- Member worktree directory name = the member repo's canonical-name **last segment** (e.g. `app-plugins`), so relative paths like `../app-plugins` resolve.
 - Follower branch policy = **mirror**: same branch name; check out if it exists (local or `origin/`), else create from the member's main branch (`main_branch`, default `"main"`).
 - Spec: `docs/superpowers/specs/2026-06-17-gwt-workspaces-design.md`.
 - Per repo owner's rule: do NOT run `git commit` automatically. The "Commit" step in each task means *stage the changes and tell the user the suggested commit message* for them to commit.
@@ -69,15 +69,15 @@ func TestWorkspaceRoundTrip(t *testing.T) {
 
 	cfg := &Config{
 		Repos: map[string]RepoEntry{
-			"grafana/grafana":            {Path: "/code/grafana", MainBranch: "main"},
-			"grafana/grafana-enterprise": {Path: "/code/grafana-enterprise"},
+			"acme/app":            {Path: "/code/app", MainBranch: "main"},
+			"acme/app-plugins": {Path: "/code/app-plugins"},
 		},
 		Workspaces: map[string]WorkspaceEntry{
-			"grafana": {
-				Members:      []string{"grafana", "grafana-enterprise"},
-				Primary:      "grafana",
-				Setup:        "make enterprise-dev",
-				SetupCwd:     "grafana",
+			"app": {
+				Members:      []string{"app", "app-plugins"},
+				Primary:      "app",
+				Setup:        "make dev",
+				SetupCwd:     "app",
 				WorktreeRoot: "~/code/.worktrees",
 			},
 		},
@@ -86,27 +86,27 @@ func TestWorkspaceRoundTrip(t *testing.T) {
 		t.Fatalf("Save() error: %v", err)
 	}
 
-	// Confirm it persisted under a [workspaces.grafana] table.
+	// Confirm it persisted under a [workspaces.app] table.
 	data, err := os.ReadFile(filepath.Join(tmp, "gwt", "config.toml"))
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if !contains(string(data), "[workspaces.grafana]") {
-		t.Fatalf("config missing [workspaces.grafana]:\n%s", data)
+	if !contains(string(data), "[workspaces.app]") {
+		t.Fatalf("config missing [workspaces.app]:\n%s", data)
 	}
 
 	loaded, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	ws, ok := loaded.Workspaces["grafana"]
+	ws, ok := loaded.Workspaces["app"]
 	if !ok {
-		t.Fatal("workspace grafana not loaded")
+		t.Fatal("workspace app not loaded")
 	}
-	if ws.Primary != "grafana" || ws.Setup != "make enterprise-dev" || ws.SetupCwd != "grafana" {
+	if ws.Primary != "app" || ws.Setup != "make dev" || ws.SetupCwd != "app" {
 		t.Errorf("unexpected workspace: %+v", ws)
 	}
-	if len(ws.Members) != 2 || ws.Members[0] != "grafana" || ws.Members[1] != "grafana-enterprise" {
+	if len(ws.Members) != 2 || ws.Members[0] != "app" || ws.Members[1] != "app-plugins" {
 		t.Errorf("members = %v", ws.Members)
 	}
 	if ws.WorktreeRoot != "~/code/.worktrees" {
@@ -117,11 +117,11 @@ func TestWorkspaceRoundTrip(t *testing.T) {
 func TestWorkspaceForRepo(t *testing.T) {
 	cfg := &Config{
 		Repos: map[string]RepoEntry{
-			"grafana/grafana":            {Path: "/code/grafana"},
-			"grafana/grafana-enterprise": {Path: "/code/grafana-enterprise"},
+			"acme/app":            {Path: "/code/app"},
+			"acme/app-plugins": {Path: "/code/app-plugins"},
 		},
 		Workspaces: map[string]WorkspaceEntry{
-			"grafana": {Members: []string{"grafana", "grafana-enterprise"}, Primary: "grafana"},
+			"app": {Members: []string{"app", "app-plugins"}, Primary: "app"},
 		},
 	}
 	tests := []struct {
@@ -130,8 +130,8 @@ func TestWorkspaceForRepo(t *testing.T) {
 		wantName  string
 		wantOK    bool
 	}{
-		{"by canonical", "grafana/grafana", "grafana", true},
-		{"by short segment", "grafana/grafana-enterprise", "grafana", true},
+		{"by canonical", "acme/app", "app", true},
+		{"by short segment", "acme/app-plugins", "app", true},
 		{"non-member", "nicwestvold/gwt", "", false},
 	}
 	for _, tt := range tests {
@@ -198,7 +198,7 @@ type WorkspaceEntry struct {
 }
 
 // lastSegment returns the final path segment of a canonical name,
-// e.g. "grafana/grafana-enterprise" -> "grafana-enterprise".
+// e.g. "acme/app-plugins" -> "app-plugins".
 func lastSegment(canonical string) string {
 	if i := strings.LastIndex(canonical, "/"); i >= 0 {
 		return canonical[i+1:]
@@ -257,11 +257,11 @@ Append to `config/workspace_test.go`:
 func TestResolveMembers(t *testing.T) {
 	cfg := &Config{
 		Repos: map[string]RepoEntry{
-			"grafana/grafana":            {Path: "/code/grafana", MainBranch: "main"},
-			"grafana/grafana-enterprise": {Path: "/code/grafana-enterprise"}, // no main_branch -> defaults
+			"acme/app":            {Path: "/code/app", MainBranch: "main"},
+			"acme/app-plugins": {Path: "/code/app-plugins"}, // no main_branch -> defaults
 		},
 	}
-	ws := WorkspaceEntry{Members: []string{"grafana", "grafana-enterprise"}, Primary: "grafana"}
+	ws := WorkspaceEntry{Members: []string{"app", "app-plugins"}, Primary: "app"}
 
 	members, err := cfg.ResolveMembers(ws)
 	if err != nil {
@@ -270,13 +270,13 @@ func TestResolveMembers(t *testing.T) {
 	if len(members) != 2 {
 		t.Fatalf("got %d members, want 2", len(members))
 	}
-	if members[0].Name != "grafana/grafana" || members[0].Short != "grafana" || !members[0].IsPrimary {
+	if members[0].Name != "acme/app" || members[0].Short != "app" || !members[0].IsPrimary {
 		t.Errorf("member[0] = %+v", members[0])
 	}
 	if members[0].MainBranch != "main" {
 		t.Errorf("member[0].MainBranch = %q, want main", members[0].MainBranch)
 	}
-	if members[1].Short != "grafana-enterprise" || members[1].IsPrimary {
+	if members[1].Short != "app-plugins" || members[1].IsPrimary {
 		t.Errorf("member[1] = %+v", members[1])
 	}
 	if members[1].MainBranch != "main" {
@@ -286,15 +286,15 @@ func TestResolveMembers(t *testing.T) {
 
 func TestResolveMembersErrors(t *testing.T) {
 	cfg := &Config{Repos: map[string]RepoEntry{
-		"a/grafana": {Path: "/a/grafana"},
-		"b/grafana": {Path: "/b/grafana"},
+		"a/app": {Path: "/a/app"},
+		"b/app": {Path: "/b/app"},
 		"x/only":    {Path: "/x/only"},
 	}}
 
 	if _, err := cfg.ResolveMembers(WorkspaceEntry{Members: []string{"missing"}}); err == nil {
 		t.Error("expected error for unregistered member")
 	}
-	if _, err := cfg.ResolveMembers(WorkspaceEntry{Members: []string{"grafana"}}); err == nil {
+	if _, err := cfg.ResolveMembers(WorkspaceEntry{Members: []string{"app"}}); err == nil {
 		t.Error("expected error for ambiguous short match")
 	}
 }
@@ -303,7 +303,7 @@ func TestResolveWorktreeRoot(t *testing.T) {
 	t.Run("explicit with tilde", func(t *testing.T) {
 		home, _ := os.UserHomeDir()
 		ws := WorkspaceEntry{WorktreeRoot: "~/code/.worktrees"}
-		got, err := ws.ResolveWorktreeRoot("grafana")
+		got, err := ws.ResolveWorktreeRoot("app")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -317,11 +317,11 @@ func TestResolveWorktreeRoot(t *testing.T) {
 		tmp := t.TempDir()
 		t.Setenv("XDG_DATA_HOME", tmp)
 		ws := WorkspaceEntry{}
-		got, err := ws.ResolveWorktreeRoot("grafana")
+		got, err := ws.ResolveWorktreeRoot("app")
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := filepath.Join(tmp, "gwt", "worktrees", "grafana")
+		want := filepath.Join(tmp, "gwt", "worktrees", "app")
 		if got != want {
 			t.Errorf("got %q, want %q", got, want)
 		}
@@ -341,7 +341,7 @@ Add imports `fmt`, `os`, `path/filepath` to the existing `import` block, then ap
 ```go
 // ResolvedMember is a workspace member resolved to a concrete repo on disk.
 type ResolvedMember struct {
-	Name       string // canonical name as registered, e.g. "grafana/grafana"
+	Name       string // canonical name as registered, e.g. "acme/app"
 	Short      string // last segment, used as the sibling directory name
 	Path       string // repo path on disk
 	MainBranch string // defaults to "main"
@@ -510,16 +510,16 @@ func TestParseAddArgs(t *testing.T) {
 func TestAddArgsBuild(t *testing.T) {
 	// New branch: flags + worktreePath + extra
 	a, _ := ParseAddArgs([]string{"-b", "feat/x", "origin/main"})
-	got := a.Build("/wt/grafana")
-	want := []string{"-b", "feat/x", "/wt/grafana", "origin/main"}
+	got := a.Build("/wt/app")
+	want := []string{"-b", "feat/x", "/wt/app", "origin/main"}
 	if !equalStrings(got, want) {
 		t.Errorf("Build new = %v, want %v", got, want)
 	}
 
 	// Existing branch: flags + worktreePath + branch
 	b, _ := ParseAddArgs([]string{"fix/login"})
-	got = b.Build("/wt/grafana")
-	want = []string{"/wt/grafana", "fix/login"}
+	got = b.Build("/wt/app")
+	want = []string{"/wt/app", "fix/login"}
 	if !equalStrings(got, want) {
 		t.Errorf("Build existing = %v, want %v", got, want)
 	}
@@ -1004,46 +1004,46 @@ func mainTestInitRepo(t *testing.T, dir string) {
 
 func TestRunWorkspaceAdd(t *testing.T) {
 	root := t.TempDir()
-	primary := filepath.Join(root, "grafana")
-	follower := filepath.Join(root, "grafana-enterprise")
+	primary := filepath.Join(root, "app")
+	follower := filepath.Join(root, "app-plugins")
 	mainTestInitRepo(t, primary)
 	mainTestInitRepo(t, follower)
 
 	wtRoot := filepath.Join(root, "worktrees")
 	cfg := &config.Config{
 		Repos: map[string]config.RepoEntry{
-			"grafana/grafana":            {Path: primary, MainBranch: "main"},
-			"grafana/grafana-enterprise": {Path: follower, MainBranch: "main"},
+			"acme/app":            {Path: primary, MainBranch: "main"},
+			"acme/app-plugins": {Path: follower, MainBranch: "main"},
 		},
 	}
 	ws := config.WorkspaceEntry{
-		Members:      []string{"grafana", "grafana-enterprise"},
-		Primary:      "grafana",
+		Members:      []string{"app", "app-plugins"},
+		Primary:      "app",
 		Setup:        "touch setup-ran",
-		SetupCwd:     "grafana",
+		SetupCwd:     "app",
 		WorktreeRoot: wtRoot,
 	}
 
-	cd, err := runWorkspaceAdd(cfg, "grafana", ws, []string{"-b", "feat/x"})
+	cd, err := runWorkspaceAdd(cfg, "app", ws, []string{"-b", "feat/x"})
 	if err != nil {
 		t.Fatalf("runWorkspaceAdd error: %v", err)
 	}
 
 	group := filepath.Join(wtRoot, "feat-x")
-	if cd != filepath.Join(group, "grafana") {
-		t.Errorf("cd = %q, want %q", cd, filepath.Join(group, "grafana"))
+	if cd != filepath.Join(group, "app") {
+		t.Errorf("cd = %q, want %q", cd, filepath.Join(group, "app"))
 	}
-	for _, short := range []string{"grafana", "grafana-enterprise"} {
+	for _, short := range []string{"app", "app-plugins"} {
 		if _, err := os.Stat(filepath.Join(group, short, "README")); err != nil {
 			t.Errorf("missing worktree for %s: %v", short, err)
 		}
 	}
 	// Setup ran in the primary worktree.
-	if _, err := os.Stat(filepath.Join(group, "grafana", "setup-ran")); err != nil {
+	if _, err := os.Stat(filepath.Join(group, "app", "setup-ran")); err != nil {
 		t.Errorf("setup did not run in primary: %v", err)
 	}
 	// Follower is on the mirrored branch.
-	cmd := exec.Command("git", "-C", filepath.Join(group, "grafana-enterprise"), "rev-parse", "--abbrev-ref", "HEAD")
+	cmd := exec.Command("git", "-C", filepath.Join(group, "app-plugins"), "rev-parse", "--abbrev-ref", "HEAD")
 	out, _ := cmd.Output()
 	if got := string(out); got != "feat/x\n" {
 		t.Errorf("follower branch = %q, want feat/x", got)
@@ -1193,30 +1193,30 @@ Append to `main_test.go`:
 ```go
 func TestRunWorkspaceRemove(t *testing.T) {
 	root := t.TempDir()
-	primary := filepath.Join(root, "grafana")
-	follower := filepath.Join(root, "grafana-enterprise")
+	primary := filepath.Join(root, "app")
+	follower := filepath.Join(root, "app-plugins")
 	mainTestInitRepo(t, primary)
 	mainTestInitRepo(t, follower)
 
 	wtRoot := filepath.Join(root, "worktrees")
 	cfg := &config.Config{
 		Repos: map[string]config.RepoEntry{
-			"grafana/grafana":            {Path: primary, MainBranch: "main"},
-			"grafana/grafana-enterprise": {Path: follower, MainBranch: "main"},
+			"acme/app":            {Path: primary, MainBranch: "main"},
+			"acme/app-plugins": {Path: follower, MainBranch: "main"},
 		},
 	}
 	ws := config.WorkspaceEntry{
-		Members:      []string{"grafana", "grafana-enterprise"},
-		Primary:      "grafana",
+		Members:      []string{"app", "app-plugins"},
+		Primary:      "app",
 		WorktreeRoot: wtRoot,
 	}
 
-	if _, err := runWorkspaceAdd(cfg, "grafana", ws, []string{"-b", "feat/x"}); err != nil {
+	if _, err := runWorkspaceAdd(cfg, "app", ws, []string{"-b", "feat/x"}); err != nil {
 		t.Fatalf("setup add failed: %v", err)
 	}
 
 	group := filepath.Join(wtRoot, "feat-x")
-	cd, err := runWorkspaceRemove(cfg, "grafana", ws, filepath.Join(group, "grafana"), false, false)
+	cd, err := runWorkspaceRemove(cfg, "app", ws, filepath.Join(group, "app"), false, false)
 	if err != nil {
 		t.Fatalf("runWorkspaceRemove error: %v", err)
 	}
@@ -1343,24 +1343,24 @@ Insert a new `### Workspaces` subsection under `## Usage`, after the `### Use` s
 ### Workspaces
 
 For codebases split across mutually-dependent sibling repos (e.g.
-`grafana` + `grafana-enterprise`, which must sit next to each other so
-`../grafana-enterprise` resolves), define a **workspace** in
+`app` + `app-plugins`, which must sit next to each other so
+`../app-plugins` resolves), define a **workspace** in
 `~/.config/gwt/config.toml`. Both repos must already be registered (via
 `gwt init`/`gwt clone`).
 
 ```toml
-[workspaces.grafana]
-members       = ["grafana", "grafana-enterprise"]  # repos, by name; first is primary
-primary       = "grafana"                            # cd target; followers mirror its branch
-setup         = "make enterprise-dev"                # optional; runs after all worktrees exist
-setup_cwd     = "grafana"                            # member dir the setup runs in (default: primary)
-worktree_root = "~/Development/grafana/code/.worktrees"  # optional; default: gwt data dir
+[workspaces.app]
+members       = ["app", "app-plugins"]  # repos, by name; first is primary
+primary       = "app"                            # cd target; followers mirror its branch
+setup         = "make dev"                # optional; runs after all worktrees exist
+setup_cwd     = "app"                            # member dir the setup runs in (default: primary)
+worktree_root = "~/Development/app/.worktrees"  # optional; default: gwt data dir
 ```
 
 Then, from inside any member:
 
 ```bash
-gwt add -b feat/x   # creates <root>/feat-x/grafana and <root>/feat-x/grafana-enterprise
+gwt add -b feat/x   # creates <root>/feat-x/app and <root>/feat-x/app-plugins
                     # on branch feat/x, then runs setup; cd's into the primary
 gwt rm              # removes the whole group's worktrees and cd's back to the primary repo
 ```

@@ -146,46 +146,46 @@ func mainTestInitRepo(t *testing.T, dir string) {
 
 func TestRunWorkspaceAdd(t *testing.T) {
 	root := t.TempDir()
-	primary := filepath.Join(root, "grafana")
-	follower := filepath.Join(root, "grafana-enterprise")
+	primary := filepath.Join(root, "app")
+	follower := filepath.Join(root, "app-plugins")
 	mainTestInitRepo(t, primary)
 	mainTestInitRepo(t, follower)
 
 	wtRoot := filepath.Join(root, "worktrees")
 	cfg := &config.Config{
 		Repos: map[string]config.RepoEntry{
-			"grafana/grafana":            {Path: primary, MainBranch: "main"},
-			"grafana/grafana-enterprise": {Path: follower, MainBranch: "main"},
+			"acme/app":            {Path: primary, MainBranch: "main"},
+			"acme/app-plugins": {Path: follower, MainBranch: "main"},
 		},
 	}
 	ws := config.WorkspaceEntry{
-		Members:      []string{"grafana", "grafana-enterprise"},
-		Primary:      "grafana",
+		Members:      []string{"app", "app-plugins"},
+		Primary:      "app",
 		Setup:        "touch setup-ran",
-		SetupCwd:     "grafana",
+		SetupCwd:     "app",
 		WorktreeRoot: wtRoot,
 	}
 
-	cd, err := runWorkspaceAdd(cfg, "grafana", ws, []string{"-b", "feat/x"})
+	cd, err := runWorkspaceAdd(cfg, "app", ws, []string{"-b", "feat/x"})
 	if err != nil {
 		t.Fatalf("runWorkspaceAdd error: %v", err)
 	}
 
 	group := filepath.Join(wtRoot, "feat-x")
-	if cd != filepath.Join(group, "grafana") {
-		t.Errorf("cd = %q, want %q", cd, filepath.Join(group, "grafana"))
+	if cd != filepath.Join(group, "app") {
+		t.Errorf("cd = %q, want %q", cd, filepath.Join(group, "app"))
 	}
-	for _, short := range []string{"grafana", "grafana-enterprise"} {
+	for _, short := range []string{"app", "app-plugins"} {
 		if _, err := os.Stat(filepath.Join(group, short, "README")); err != nil {
 			t.Errorf("missing worktree for %s: %v", short, err)
 		}
 	}
 	// Setup ran in the primary worktree.
-	if _, err := os.Stat(filepath.Join(group, "grafana", "setup-ran")); err != nil {
+	if _, err := os.Stat(filepath.Join(group, "app", "setup-ran")); err != nil {
 		t.Errorf("setup did not run in primary: %v", err)
 	}
 	// Follower is on the mirrored branch.
-	cmd := exec.Command("git", "-C", filepath.Join(group, "grafana-enterprise"), "rev-parse", "--abbrev-ref", "HEAD")
+	cmd := exec.Command("git", "-C", filepath.Join(group, "app-plugins"), "rev-parse", "--abbrev-ref", "HEAD")
 	out, _ := cmd.Output()
 	if got := string(out); got != "feat/x\n" {
 		t.Errorf("follower branch = %q, want feat/x", got)
@@ -276,30 +276,30 @@ func TestPartitionRemoveArgs(t *testing.T) {
 
 func TestRunWorkspaceRemove(t *testing.T) {
 	root := t.TempDir()
-	primary := filepath.Join(root, "grafana")
-	follower := filepath.Join(root, "grafana-enterprise")
+	primary := filepath.Join(root, "app")
+	follower := filepath.Join(root, "app-plugins")
 	mainTestInitRepo(t, primary)
 	mainTestInitRepo(t, follower)
 
 	wtRoot := filepath.Join(root, "worktrees")
 	cfg := &config.Config{
 		Repos: map[string]config.RepoEntry{
-			"grafana/grafana":            {Path: primary, MainBranch: "main"},
-			"grafana/grafana-enterprise": {Path: follower, MainBranch: "main"},
+			"acme/app":            {Path: primary, MainBranch: "main"},
+			"acme/app-plugins": {Path: follower, MainBranch: "main"},
 		},
 	}
 	ws := config.WorkspaceEntry{
-		Members:      []string{"grafana", "grafana-enterprise"},
-		Primary:      "grafana",
+		Members:      []string{"app", "app-plugins"},
+		Primary:      "app",
 		WorktreeRoot: wtRoot,
 	}
 
-	if _, err := runWorkspaceAdd(cfg, "grafana", ws, []string{"-b", "feat/x"}); err != nil {
+	if _, err := runWorkspaceAdd(cfg, "app", ws, []string{"-b", "feat/x"}); err != nil {
 		t.Fatalf("setup add failed: %v", err)
 	}
 
 	group := filepath.Join(wtRoot, "feat-x")
-	cd, err := runWorkspaceRemove(cfg, "grafana", ws, filepath.Join(group, "grafana"), false, false)
+	cd, err := runWorkspaceRemove(cfg, "app", ws, filepath.Join(group, "app"), false, false)
 	if err != nil {
 		t.Fatalf("runWorkspaceRemove error: %v", err)
 	}

@@ -942,16 +942,16 @@ func TestParseAddArgs(t *testing.T) {
 func TestAddArgsBuild(t *testing.T) {
 	// New branch: flags + worktreePath + extra
 	a, _ := ParseAddArgs([]string{"-b", "feat/x", "origin/main"})
-	got := a.Build("/wt/grafana")
-	want := []string{"-b", "feat/x", "/wt/grafana", "origin/main"}
+	got := a.Build("/wt/app")
+	want := []string{"-b", "feat/x", "/wt/app", "origin/main"}
 	if !equalStrings(got, want) {
 		t.Errorf("Build new = %v, want %v", got, want)
 	}
 
 	// Existing branch: flags + worktreePath + branch
 	b, _ := ParseAddArgs([]string{"fix/login"})
-	got = b.Build("/wt/grafana")
-	want = []string{"/wt/grafana", "fix/login"}
+	got = b.Build("/wt/app")
+	want = []string{"/wt/app", "fix/login"}
 	if !equalStrings(got, want) {
 		t.Errorf("Build existing = %v, want %v", got, want)
 	}

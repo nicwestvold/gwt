@@ -13,15 +13,15 @@ func TestWorkspaceRoundTrip(t *testing.T) {
 
 	cfg := &Config{
 		Repos: map[string]RepoEntry{
-			"grafana/grafana":            {Path: "/code/grafana", MainBranch: "main"},
-			"grafana/grafana-enterprise": {Path: "/code/grafana-enterprise"},
+			"acme/app":            {Path: "/code/app", MainBranch: "main"},
+			"acme/app-plugins": {Path: "/code/app-plugins"},
 		},
 		Workspaces: map[string]WorkspaceEntry{
-			"grafana": {
-				Members:      []string{"grafana", "grafana-enterprise"},
-				Primary:      "grafana",
-				Setup:        "make enterprise-dev",
-				SetupCwd:     "grafana",
+			"app": {
+				Members:      []string{"app", "app-plugins"},
+				Primary:      "app",
+				Setup:        "make dev",
+				SetupCwd:     "app",
 				WorktreeRoot: "~/code/.worktrees",
 			},
 		},
@@ -30,27 +30,27 @@ func TestWorkspaceRoundTrip(t *testing.T) {
 		t.Fatalf("Save() error: %v", err)
 	}
 
-	// Confirm it persisted under a [workspaces.grafana] table.
+	// Confirm it persisted under a [workspaces.app] table.
 	data, err := os.ReadFile(filepath.Join(tmp, "gwt", "config.toml"))
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if !strings.Contains(string(data), "[workspaces.grafana]") {
-		t.Fatalf("config missing [workspaces.grafana]:\n%s", data)
+	if !strings.Contains(string(data), "[workspaces.app]") {
+		t.Fatalf("config missing [workspaces.app]:\n%s", data)
 	}
 
 	loaded, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	ws, ok := loaded.Workspaces["grafana"]
+	ws, ok := loaded.Workspaces["app"]
 	if !ok {
-		t.Fatal("workspace grafana not loaded")
+		t.Fatal("workspace app not loaded")
 	}
-	if ws.Primary != "grafana" || ws.Setup != "make enterprise-dev" || ws.SetupCwd != "grafana" {
+	if ws.Primary != "app" || ws.Setup != "make dev" || ws.SetupCwd != "app" {
 		t.Errorf("unexpected workspace: %+v", ws)
 	}
-	if len(ws.Members) != 2 || ws.Members[0] != "grafana" || ws.Members[1] != "grafana-enterprise" {
+	if len(ws.Members) != 2 || ws.Members[0] != "app" || ws.Members[1] != "app-plugins" {
 		t.Errorf("members = %v", ws.Members)
 	}
 	if ws.WorktreeRoot != "~/code/.worktrees" {
@@ -61,11 +61,11 @@ func TestWorkspaceRoundTrip(t *testing.T) {
 func TestWorkspaceForRepo(t *testing.T) {
 	cfg := &Config{
 		Repos: map[string]RepoEntry{
-			"grafana/grafana":            {Path: "/code/grafana"},
-			"grafana/grafana-enterprise": {Path: "/code/grafana-enterprise"},
+			"acme/app":            {Path: "/code/app"},
+			"acme/app-plugins": {Path: "/code/app-plugins"},
 		},
 		Workspaces: map[string]WorkspaceEntry{
-			"grafana": {Members: []string{"grafana", "grafana-enterprise"}, Primary: "grafana"},
+			"app": {Members: []string{"app", "app-plugins"}, Primary: "app"},
 		},
 	}
 	tests := []struct {
@@ -74,8 +74,8 @@ func TestWorkspaceForRepo(t *testing.T) {
 		wantName  string
 		wantOK    bool
 	}{
-		{"by canonical", "grafana/grafana", "grafana", true},
-		{"by short segment", "grafana/grafana-enterprise", "grafana", true},
+		{"by canonical", "acme/app", "app", true},
+		{"by short segment", "acme/app-plugins", "app", true},
 		{"non-member", "nicwestvold/gwt", "", false},
 	}
 	for _, tt := range tests {
@@ -91,11 +91,11 @@ func TestWorkspaceForRepo(t *testing.T) {
 func TestResolveMembers(t *testing.T) {
 	cfg := &Config{
 		Repos: map[string]RepoEntry{
-			"grafana/grafana":            {Path: "/code/grafana", MainBranch: "main"},
-			"grafana/grafana-enterprise": {Path: "/code/grafana-enterprise"}, // no main_branch -> defaults
+			"acme/app":            {Path: "/code/app", MainBranch: "main"},
+			"acme/app-plugins": {Path: "/code/app-plugins"}, // no main_branch -> defaults
 		},
 	}
-	ws := WorkspaceEntry{Members: []string{"grafana", "grafana-enterprise"}, Primary: "grafana"}
+	ws := WorkspaceEntry{Members: []string{"app", "app-plugins"}, Primary: "app"}
 
 	members, err := cfg.ResolveMembers(ws)
 	if err != nil {
@@ -104,13 +104,13 @@ func TestResolveMembers(t *testing.T) {
 	if len(members) != 2 {
 		t.Fatalf("got %d members, want 2", len(members))
 	}
-	if members[0].Name != "grafana/grafana" || members[0].Short != "grafana" || !members[0].IsPrimary {
+	if members[0].Name != "acme/app" || members[0].Short != "app" || !members[0].IsPrimary {
 		t.Errorf("member[0] = %+v", members[0])
 	}
 	if members[0].MainBranch != "main" {
 		t.Errorf("member[0].MainBranch = %q, want main", members[0].MainBranch)
 	}
-	if members[1].Short != "grafana-enterprise" || members[1].IsPrimary {
+	if members[1].Short != "app-plugins" || members[1].IsPrimary {
 		t.Errorf("member[1] = %+v", members[1])
 	}
 	if members[1].MainBranch != "main" {
@@ -120,8 +120,8 @@ func TestResolveMembers(t *testing.T) {
 
 func TestResolveMembersErrors(t *testing.T) {
 	cfg := &Config{Repos: map[string]RepoEntry{
-		"a/grafana": {Path: "/a/grafana"},
-		"b/grafana": {Path: "/b/grafana"},
+		"a/app": {Path: "/a/app"},
+		"b/app": {Path: "/b/app"},
 		"x/only":    {Path: "/x/only"},
 	}}
 
@@ -129,19 +129,19 @@ func TestResolveMembersErrors(t *testing.T) {
 		t.Error("expected error for unregistered member")
 	}
 
-	_, ambiguousErr := cfg.ResolveMembers(WorkspaceEntry{Members: []string{"grafana"}})
+	_, ambiguousErr := cfg.ResolveMembers(WorkspaceEntry{Members: []string{"app"}})
 	if ambiguousErr == nil {
 		t.Error("expected error for ambiguous short match")
 	} else {
 		// Both matches must appear in sorted order so the message is deterministic.
 		msg := ambiguousErr.Error()
-		ia := strings.Index(msg, "a/grafana")
-		ib := strings.Index(msg, "b/grafana")
+		ia := strings.Index(msg, "a/app")
+		ib := strings.Index(msg, "b/app")
 		if ia < 0 || ib < 0 {
 			t.Errorf("ambiguous error should name both matches, got: %v", ambiguousErr)
 		}
 		if ia > ib {
-			t.Errorf("ambiguous error names should appear in sorted order (a/grafana before b/grafana), got: %v", ambiguousErr)
+			t.Errorf("ambiguous error names should appear in sorted order (a/app before b/app), got: %v", ambiguousErr)
 		}
 	}
 }
@@ -150,7 +150,7 @@ func TestResolveWorktreeRoot(t *testing.T) {
 	t.Run("explicit with tilde", func(t *testing.T) {
 		home, _ := os.UserHomeDir()
 		ws := WorkspaceEntry{WorktreeRoot: "~/code/.worktrees"}
-		got, err := ws.ResolveWorktreeRoot("grafana")
+		got, err := ws.ResolveWorktreeRoot("app")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -164,11 +164,11 @@ func TestResolveWorktreeRoot(t *testing.T) {
 		tmp := t.TempDir()
 		t.Setenv("XDG_DATA_HOME", tmp)
 		ws := WorkspaceEntry{}
-		got, err := ws.ResolveWorktreeRoot("grafana")
+		got, err := ws.ResolveWorktreeRoot("app")
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := filepath.Join(tmp, "gwt", "worktrees", "grafana")
+		want := filepath.Join(tmp, "gwt", "worktrees", "app")
 		if got != want {
 			t.Errorf("got %q, want %q", got, want)
 		}

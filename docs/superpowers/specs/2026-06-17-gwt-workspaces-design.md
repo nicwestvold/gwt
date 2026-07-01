@@ -7,28 +7,26 @@
 
 Some codebases are split across two (or more) git repositories that are
 mutually dependent and must be checked out as **sibling directories**. The
-motivating case is `grafana` + `grafana-enterprise`:
+motivating case is an application split into a primary `app` repo and a coupled
+`app-plugins` repo:
 
-- Each repo is independent (`grafana-enterprise` is not even a Go module).
-- They integrate by **copying/symlinking enterprise source into the grafana
-  working tree** at dev-setup time, gated by a hardcoded relative path
-  `../grafana-enterprise`.
-  - Enterprise `build.sh`/`install.sh` (run via `make enterprise-dev`, default
-    `GRAFANA_DIR=../grafana`) copy `src/pkg/extensions/*` →
-    `grafana/pkg/extensions/`, `src/public/*` → `grafana/public/app/extensions/`,
-    wire files → `grafana/pkg/server/`, and symlink the enterprise Makefile into
-    `grafana/local/Makefile`.
-  - grafana keys its enterprise build off the *presence* of those injected files
-    (`pkg/extensions/ext.go`, `public/app/extensions/index.ts`).
-- **All injected paths are gitignored in grafana** — the integration lives only
+- Each repo is independent (`app-plugins` may not even be the same language or
+  module type as `app`).
+- They integrate by **copying/symlinking source from `app-plugins` into the
+  `app` working tree** at dev-setup time, gated by a hardcoded relative path
+  `../app-plugins`.
+  - A setup command (run via `make dev`) copies plugin source into subtrees of
+    `app/` and symlinks a build file into the `app` working tree.
+  - `app` keys its extended build off the *presence* of those injected files.
+- **All injected paths are gitignored in `app`** — the integration lives only
   in the working tree, never in git.
 
 This breaks `git worktree` (and therefore `gwt`) in two ways:
 
 1. A fresh worktree only materializes tracked files, so the gitignored
-   enterprise integration is absent → the worktree builds as OSS-only until the
+   integration is absent → the worktree builds as the base app only until the
    link step is re-run.
-2. The `../grafana-enterprise` sibling assumption is false once worktrees are
+2. The `../app-plugins` sibling assumption is false once worktrees are
    created under a different parent.
 
 `gwt` today models **one repo → N worktrees** with a per-repo `post-checkout`
@@ -40,7 +38,7 @@ out as siblings.
 Add a **workspace** concept so that running `gwt add -b feat/x` inside one member
 repo (the primary) also creates sibling worktrees for the associated repos,
 places them in a shared per-branch directory so relative paths resolve, and runs
-a configurable cross-repo setup command (e.g. `make enterprise-dev`).
+a configurable cross-repo setup command (e.g. `make dev`).
 
 ## Non-goals
 
@@ -66,20 +64,20 @@ New top-level `[workspaces.<name>]` table. `[repos]` is unchanged and reused for
 member paths / main branches.
 
 ```toml
-[workspaces.grafana]
-members       = ["grafana", "grafana-enterprise"]  # resolved against [repos]; order = creation order
-primary       = "grafana"                            # cd target; followers mirror its branch
-setup         = "make enterprise-dev"                # optional; runs after all worktrees exist
-setup_cwd     = "grafana"                            # optional, default = primary; member whose worktree it runs in
-worktree_root = "~/Development/grafana/code/.worktrees"  # optional, default = <dataDir>/worktrees/<workspace>
+[workspaces.app]
+members       = ["app", "app-plugins"]  # resolved against [repos]; order = creation order
+primary       = "app"                            # cd target; followers mirror its branch
+setup         = "make dev"                # optional; runs after all worktrees exist
+setup_cwd     = "app"                            # optional, default = primary; member whose worktree it runs in
+worktree_root = "~/Development/app/.worktrees"  # optional, default = <dataDir>/worktrees/<workspace>
 ```
 
 - **Member resolution:** each string matches a registered `[repos]` entry — exact
-  canonical name (`grafana/grafana-enterprise`), else a **unique** last-segment
-  match (`grafana-enterprise`). Ambiguous or missing → error *before* anything is
-  created (e.g. `member "grafana-enterprise" not registered; run gwt init there`).
+  canonical name (`acme/app-plugins`), else a **unique** last-segment
+  match (`app-plugins`). Ambiguous or missing → error *before* anything is
+  created (e.g. `member "app-plugins" not registered; run gwt init there`).
 - **Worktree dir name** = the member's short last segment, so siblings are named
-  `grafana` / `grafana-enterprise` and `../grafana-enterprise` resolves.
+  `app` / `app-plugins` and `../app-plugins` resolves.
 - `setup` is a single command string in v1; the schema leaves room to later
   accept a list of `{run, cwd}` steps.
 - `~` in `worktree_root` is expanded.
@@ -114,7 +112,7 @@ finds the workspace that lists the given repo as a member.
 4. For each member **in order**:
    - **primary:** `git worktree add` with the user's args verbatim
      (`-b feat/x [start-point]`), run with `cmd.Dir =` the member repo dir,
-     worktree path `<group>/grafana`.
+     worktree path `<group>/app`.
    - **followers (mirror):** worktree at `<group>/<short>` on `feat/x`:
      - if `feat/x` exists locally or as `origin/feat/x` → `worktree add <path> feat/x`;
      - else → `worktree add -b feat/x <path> origin/<main_branch>`, where
@@ -155,7 +153,7 @@ Add a concise (terse) `### Workspaces` section to `README.md` under `## Usage`
 
 - One sentence on what a workspace is and the sibling-repo problem it solves.
 - The `[workspaces.<name>]` config block with field meanings (1 line each).
-- The grafana/grafana-enterprise example.
+- The acme/app-plugins example.
 - That `gwt add` / `gwt rm` fan out across members automatically.
 
 Keep it to roughly the density of the existing `### Clone` / `### Init` sections.

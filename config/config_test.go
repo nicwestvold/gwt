@@ -11,7 +11,7 @@ func TestLoadSaveRoundTrip(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmp)
 
 	cfg := &Config{Repos: map[string]RepoEntry{
-		"grafana/metrics-drilldown": {
+		"acme/dashboard": {
 			Path:           "/home/user/code/metrics-drilldown",
 			Bare:           true,
 			PackageManager: "pnpm",
@@ -37,9 +37,9 @@ func TestLoadSaveRoundTrip(t *testing.T) {
 		t.Fatalf("got %d repos, want 2", len(loaded.Repos))
 	}
 
-	entry, ok := loaded.Lookup("grafana/metrics-drilldown")
+	entry, ok := loaded.Lookup("acme/dashboard")
 	if !ok {
-		t.Fatal("Lookup(grafana/metrics-drilldown) not found")
+		t.Fatal("Lookup(acme/dashboard) not found")
 	}
 	if entry.Path != "/home/user/code/metrics-drilldown" {
 		t.Errorf("Path = %q, want %q", entry.Path, "/home/user/code/metrics-drilldown")

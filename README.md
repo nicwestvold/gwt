@@ -127,25 +127,25 @@ Finds the worktree checked out on the given branch and switches to it. Requires 
 
 ### Workspaces
 
-For codebases split across mutually-dependent sibling repos (e.g.
-`grafana` + `grafana-enterprise`, which must sit next to each other so
-`../grafana-enterprise` resolves), define a **workspace** in
+For codebases split across mutually-dependent sibling repos (e.g. an
+`app` + `app-plugins` pair, which must sit next to each other so
+`../app-plugins` resolves), define a **workspace** in
 `~/.config/gwt/config.toml`. Both repos must already be registered (via
 `gwt init`/`gwt clone`).
 
 ```toml
-[workspaces.grafana]
-members       = ["grafana", "grafana-enterprise"]  # repos, by name; first is primary
-primary       = "grafana"                            # cd target; followers mirror its branch
-setup         = "make enterprise-dev"                # optional; runs after all worktrees exist
-setup_cwd     = "grafana"                            # member dir the setup runs in (default: primary)
-worktree_root = "~/Development/grafana/code/.worktrees"  # optional; default: gwt data dir
+[workspaces.app]
+members       = ["app", "app-plugins"]  # repos, by name; first is primary
+primary       = "app"                     # cd target; followers mirror its branch
+setup         = "make dev"                # optional; runs after all worktrees exist
+setup_cwd     = "app"                     # member dir the setup runs in (default: primary)
+worktree_root = "~/Development/app/.worktrees"  # optional; default: gwt data dir
 ```
 
 Then, from inside any member:
 
 ```bash
-gwt add -b feat/x   # creates <root>/feat-x/grafana and <root>/feat-x/grafana-enterprise
+gwt add -b feat/x   # creates <root>/feat-x/app and <root>/feat-x/app-plugins
                     # on branch feat/x, then runs setup; cd's into the primary
 gwt rm              # removes the whole group's worktrees and cd's back to the primary repo
 ```
