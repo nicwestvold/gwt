@@ -1,7 +1,9 @@
 package hook
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -50,6 +52,22 @@ func TestShellEscape(t *testing.T) {
 	}
 }
 
+// assertValidBash runs `bash -n` on the script to check it parses.
+func assertValidBash(t *testing.T, script string) {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not found on PATH")
+	}
+	cmd := exec.Command(bash, "-n")
+	cmd.Stdin = strings.NewReader(script)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Errorf("bash -n failed: %v\n%s\n---\n%s", err, stderr.String(), script)
+	}
+}
+
 func TestGenerateEscapesCopyFiles(t *testing.T) {
 	data := HookData{
 		BasePath:  "/repo",
@@ -94,7 +112,7 @@ func TestGenerate(t *testing.T) {
 				PackageManager: "pnpm",
 				VersionManager: "mise",
 			},
-			contains: []string{"mise exec --", "pnpm install", "pnpm run build"},
+			contains: []string{"mise trust", "mise exec --", "pnpm install", "pnpm run build"},
 		},
 		{
 			name: "with asdf",
@@ -107,7 +125,7 @@ func TestGenerate(t *testing.T) {
 		{
 			name:     "empty data",
 			data:     HookData{},
-			contains: []string{"#!/bin/bash", "if [["},
+			contains: []string{"#!/bin/bash", "if [[", "    :"},
 			excludes: []string{"cp", "install"},
 		},
 		{
@@ -116,6 +134,22 @@ func TestGenerate(t *testing.T) {
 				CopyFiles: nil,
 			},
 			excludes: []string{"cp"},
+		},
+		{
+			name: "mise only no package manager",
+			data: HookData{
+				VersionManager: "mise",
+			},
+			contains: []string{"mise trust", "warning: mise not found"},
+			excludes: []string{"install", "corepack", "cp"},
+		},
+		{
+			name: "asdf only no package manager",
+			data: HookData{
+				VersionManager: "asdf",
+			},
+			contains: []string{"asdf.sh", "warning: asdf not found"},
+			excludes: []string{"install", "corepack", "cp"},
 		},
 	}
 
@@ -137,6 +171,108 @@ func TestGenerate(t *testing.T) {
 					t.Errorf("output should not contain %q\n---\n%s", s, got)
 				}
 			}
+
+			assertValidBash(t, got)
+		})
+	}
+}
+
+func TestGenerateGolden(t *testing.T) {
+	tests := []struct {
+		name string
+		data HookData
+		want string
+	}{
+		{
+			name: "mise only",
+			data: HookData{VersionManager: "mise"},
+			want: `#!/bin/bash
+
+if [[ "$1" == "0000000000000000000000000000000000000000" ]]; then
+
+    (
+        set +e  # allow failures without killing the subshell
+
+        if command -v mise &>/dev/null; then
+            mise trust
+        else
+            echo "warning: mise not found, skipping project setup" >&2
+        fi
+    )
+fi
+`,
+		},
+		{
+			name: "mise with pnpm",
+			data: HookData{VersionManager: "mise", PackageManager: "pnpm"},
+			want: `#!/bin/bash
+
+if [[ "$1" == "0000000000000000000000000000000000000000" ]]; then
+
+    (
+        set +e  # allow failures without killing the subshell
+
+        if command -v mise &>/dev/null; then
+            mise trust
+            mise exec -- corepack enable
+
+            if mise exec -- pnpm install; then
+                mise exec -- pnpm run build
+            else
+                echo "pnpm install failed; skipping build"
+            fi
+        else
+            echo "warning: mise not found, skipping project setup" >&2
+        fi
+    )
+fi
+`,
+		},
+		{
+			name: "asdf only",
+			data: HookData{VersionManager: "asdf"},
+			want: `#!/bin/bash
+
+if [[ "$1" == "0000000000000000000000000000000000000000" ]]; then
+
+    (
+        set +e  # allow failures without killing the subshell
+
+        export ASDF_DIR="${ASDF_DIR:-$HOME/.asdf}"
+        if [[ -f "$ASDF_DIR/asdf.sh" ]]; then
+            . "$ASDF_DIR/asdf.sh"
+        elif command -v brew &>/dev/null && [[ -f "$(brew --prefix asdf)/libexec/asdf.sh" ]]; then
+            . "$(brew --prefix asdf)/libexec/asdf.sh"
+        else
+            echo "warning: asdf not found, skipping project setup" >&2
+            exit 0
+        fi
+    )
+fi
+`,
+		},
+		{
+			name: "empty data",
+			data: HookData{},
+			want: `#!/bin/bash
+
+if [[ "$1" == "0000000000000000000000000000000000000000" ]]; then
+    :
+fi
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Generate(tt.data)
+			if err != nil {
+				t.Fatalf("Generate() error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("output mismatch\n--- got ---\n%s\n--- want ---\n%s", got, tt.want)
+			}
+			assertValidBash(t, got)
 		})
 	}
 }

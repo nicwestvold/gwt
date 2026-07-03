@@ -17,7 +17,7 @@ if [[ "$1" == "0000000000000000000000000000000000000000" ]]; then
         fi
     done
 {{- end}}
-{{- if .PackageManager}}
+{{- if or .VersionManager .PackageManager}}
 
     (
         set +e  # allow failures without killing the subshell
@@ -32,6 +32,7 @@ if [[ "$1" == "0000000000000000000000000000000000000000" ]]; then
             echo "warning: asdf not found, skipping project setup" >&2
             exit 0
         fi
+{{- if .PackageManager}}
         corepack enable
 
         if {{.PackageManager}} install; then
@@ -39,9 +40,12 @@ if [[ "$1" == "0000000000000000000000000000000000000000" ]]; then
         else
             echo "{{.PackageManager}} install failed; skipping build"
         fi
+{{- end}}
 {{- else if eq .VersionManager "mise"}}
 
         if command -v mise &>/dev/null; then
+            mise trust
+{{- if .PackageManager}}
             mise exec -- corepack enable
 
             if mise exec -- {{.PackageManager}} install; then
@@ -49,6 +53,7 @@ if [[ "$1" == "0000000000000000000000000000000000000000" ]]; then
             else
                 echo "{{.PackageManager}} install failed; skipping build"
             fi
+{{- end}}
         else
             echo "warning: mise not found, skipping project setup" >&2
         fi
@@ -61,5 +66,8 @@ if [[ "$1" == "0000000000000000000000000000000000000000" ]]; then
         fi
 {{- end}}
     )
+{{- end}}
+{{- if not (or .CopyFiles .VersionManager .PackageManager)}}
+    :
 {{- end}}
 fi
