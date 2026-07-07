@@ -324,6 +324,10 @@ var removeCmd = &cobra.Command{
 Accepts a branch name or a path. If the argument matches a worktree branch,
 it resolves to that worktree's path.
 
+In a workspace, the whole branch group (all member worktrees) is removed;
+the argument may be a branch name, a member worktree path, or the group
+directory.
+
 After removal, the shell wrapper (from 'gwt shell-init') will cd back
 to the repository root.
 
@@ -348,22 +352,40 @@ Supports all git worktree remove flags (e.g., --force).`,
 		}
 
 		// Workspace teardown: if this repo is a workspace member, remove the
-		// whole branch group based on the current worktree.
+		// whole branch group, identified by the argument (branch name or
+		// path) or, absent one, by the current worktree.
 		if canonical, nameErr := repo.CanonicalName(); nameErr == nil {
 			if cfg, cfgErr := config.Load(); cfgErr == nil {
 				if wsName, ws, ok := cfg.WorkspaceForRepo(canonical); ok {
 					force, positionals := partitionRemoveArgs(args)
-					if len(positionals) > 0 {
-						return fmt.Errorf("workspace removal operates on the current worktree; cd into the member worktree to remove and run `gwt rm` (got %q)", positionals[0])
+					if len(positionals) > 1 {
+						return fmt.Errorf("expected at most one worktree, got %d: %v", len(positionals), positionals)
 					}
-					var buf bytes.Buffer
-					tl := exec.Command("git", "rev-parse", "--show-toplevel")
-					tl.Stdout = &buf
-					if tl.Run() != nil {
-						return fmt.Errorf("not inside a git worktree — cd into a member worktree first")
+					members, mErr := cfg.ResolveMembers(ws)
+					if mErr != nil {
+						return mErr
 					}
-					current := strings.TrimSpace(buf.String())
-					cd, rmErr := runWorkspaceRemove(cfg, wsName, ws, current, keepBranch, force)
+					root, rErr := ws.ResolveWorktreeRoot(wsName)
+					if rErr != nil {
+						return rErr
+					}
+					var group string
+					if len(positionals) == 1 {
+						group, err = resolveWorkspaceGroup(root, members, positionals[0])
+					} else {
+						var buf bytes.Buffer
+						tl := exec.Command("git", "rev-parse", "--show-toplevel")
+						tl.Stdout = &buf
+						if tl.Run() != nil {
+							return fmt.Errorf("not inside a git worktree — cd into a member worktree or pass a branch name/path")
+						}
+						current := strings.TrimSpace(buf.String())
+						group, err = validateGroup(root, "the current worktree", filepath.Dir(current))
+					}
+					if err != nil {
+						return err
+					}
+					cd, rmErr := runWorkspaceRemove(cfg, wsName, ws, group, keepBranch, force)
 					if rmErr != nil {
 						return rmErr
 					}
@@ -655,15 +677,76 @@ func runWorkspaceAdd(cfg *config.Config, wsName string, ws config.WorkspaceEntry
 	return filepath.Join(group, members[0].Short), nil
 }
 
-// runWorkspaceRemove removes every member worktree in the branch group that
-// currentWorktree belongs to, then cleans the empty group dir. Returns the
-// primary's real repo path to cd back into.
-func runWorkspaceRemove(cfg *config.Config, wsName string, ws config.WorkspaceEntry, currentWorktree string, keepBranch, force bool) (string, error) {
+// resolveWorkspaceGroup maps a user-supplied worktree identifier — a branch
+// name, a member worktree path, or the group dir itself — to the branch group
+// directory to remove.
+func resolveWorkspaceGroup(root string, members []config.ResolvedMember, arg string) (string, error) {
+	if !strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "/") && !strings.HasPrefix(arg, ".") {
+		// Branch name: resolve via the primary member's worktree list.
+		primary := members[0]
+		for _, m := range members {
+			if m.IsPrimary {
+				primary = m
+			}
+		}
+		pr := &git.Repo{Dir: primary.Path}
+		if path, found, err := pr.FindWorktreeByBranch(arg); err == nil && found {
+			return validateGroup(root, arg, filepath.Dir(path))
+		}
+		// Group-dir name as shown in `gwt ls` paths (branch with '/' flattened to '-').
+		if fi, err := os.Stat(filepath.Join(root, arg)); err == nil && fi.IsDir() {
+			return validateGroup(root, arg, groupFromPath(filepath.Join(root, arg), members))
+		}
+		return "", fmt.Errorf("no workspace worktree found for %q", arg)
+	}
+
+	abs, err := filepath.Abs(arg)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve path %q: %w", arg, err)
+	}
+	if fi, err := os.Stat(abs); err != nil || !fi.IsDir() {
+		return "", fmt.Errorf("no workspace worktree found at %q", arg)
+	}
+	return validateGroup(root, arg, groupFromPath(abs, members))
+}
+
+// groupFromPath returns the group dir for a path that may be either a member
+// worktree (its parent is the group) or the group dir itself.
+func groupFromPath(path string, members []config.ResolvedMember) string {
+	base := filepath.Base(path)
+	for _, m := range members {
+		if base == m.Short {
+			return filepath.Dir(path)
+		}
+	}
+	return path
+}
+
+// validateGroup rejects group dirs that are not direct children of the
+// workspace root, so removal can never touch a real repo checkout (e.g. when
+// arg is the main branch, which resolves to a member's actual repo). Returns
+// the group with symlinks resolved.
+func validateGroup(root, arg, group string) (string, error) {
+	if r, err := filepath.EvalSymlinks(root); err == nil {
+		root = r
+	}
+	if g, err := filepath.EvalSymlinks(group); err == nil {
+		group = g
+	}
+	if filepath.Dir(filepath.Clean(group)) != filepath.Clean(root) {
+		return "", fmt.Errorf("%s resolves to %s, which is not a workspace worktree under %s", arg, group, root)
+	}
+	return filepath.Clean(group), nil
+}
+
+// runWorkspaceRemove removes every member worktree in the branch group dir,
+// then cleans the empty group dir. Returns the primary's real repo path to
+// cd back into.
+func runWorkspaceRemove(cfg *config.Config, wsName string, ws config.WorkspaceEntry, group string, keepBranch, force bool) (string, error) {
 	members, err := cfg.ResolveMembers(ws)
 	if err != nil {
 		return "", err
 	}
-	group := filepath.Dir(currentWorktree)
 
 	for _, m := range members {
 		worktreePath := filepath.Join(group, m.Short)

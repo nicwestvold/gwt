@@ -148,6 +148,7 @@ Then, from inside any member:
 gwt add -b feat/x   # creates <root>/feat-x/app and <root>/feat-x/app-plugins
                     # on branch feat/x, then runs setup; cd's into the primary
 gwt rm              # removes the whole group's worktrees and cd's back to the primary repo
+gwt rm feat/x       # same, by branch name (or a worktree/group path) from anywhere in a member
 ```
 
 Followers mirror the branch: an existing branch is checked out, otherwise it is

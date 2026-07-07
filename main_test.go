@@ -299,7 +299,7 @@ func TestRunWorkspaceRemove(t *testing.T) {
 	}
 
 	group := filepath.Join(wtRoot, "feat-x")
-	cd, err := runWorkspaceRemove(cfg, "app", ws, filepath.Join(group, "app"), false, false)
+	cd, err := runWorkspaceRemove(cfg, "app", ws, group, false, false)
 	if err != nil {
 		t.Fatalf("runWorkspaceRemove error: %v", err)
 	}
@@ -308,5 +308,79 @@ func TestRunWorkspaceRemove(t *testing.T) {
 	}
 	if _, err := os.Stat(group); !os.IsNotExist(err) {
 		t.Error("group dir still present after remove")
+	}
+}
+
+func TestResolveWorkspaceGroup(t *testing.T) {
+	root := t.TempDir()
+	primary := filepath.Join(root, "app")
+	follower := filepath.Join(root, "app-plugins")
+	mainTestInitRepo(t, primary)
+	mainTestInitRepo(t, follower)
+
+	wtRoot := filepath.Join(root, "worktrees")
+	cfg := &config.Config{
+		Repos: map[string]config.RepoEntry{
+			"acme/app":         {Path: primary, MainBranch: "main"},
+			"acme/app-plugins": {Path: follower, MainBranch: "main"},
+		},
+	}
+	ws := config.WorkspaceEntry{
+		Members:      []string{"app", "app-plugins"},
+		Primary:      "app",
+		WorktreeRoot: wtRoot,
+	}
+
+	if _, err := runWorkspaceAdd(cfg, "app", ws, []string{"-b", "feat/x"}); err != nil {
+		t.Fatalf("setup add failed: %v", err)
+	}
+
+	members, err := cfg.ResolveMembers(ws)
+	if err != nil {
+		t.Fatalf("ResolveMembers error: %v", err)
+	}
+	wantGroup, err := filepath.EvalSymlinks(filepath.Join(wtRoot, "feat-x"))
+	if err != nil {
+		t.Fatalf("EvalSymlinks error: %v", err)
+	}
+
+	resolves := []struct {
+		name string
+		arg  string
+	}{
+		{"branch name", "feat/x"},
+		{"flattened group-dir name", "feat-x"},
+		{"member worktree path", filepath.Join(wtRoot, "feat-x", "app")},
+		{"follower worktree path", filepath.Join(wtRoot, "feat-x", "app-plugins")},
+		{"group dir path", filepath.Join(wtRoot, "feat-x")},
+	}
+	for _, tt := range resolves {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveWorkspaceGroup(wtRoot, members, tt.arg)
+			if err != nil {
+				t.Fatalf("resolveWorkspaceGroup(%q) error: %v", tt.arg, err)
+			}
+			if got != wantGroup {
+				t.Errorf("group = %q, want %q", got, wantGroup)
+			}
+		})
+	}
+
+	rejects := []struct {
+		name string
+		arg  string
+	}{
+		{"unknown branch", "feat/nope"},
+		{"nonexistent path", filepath.Join(wtRoot, "no-such-dir")},
+		{"main branch resolves to real repo", "main"},
+		{"real repo path", primary},
+		{"path outside worktree root", root},
+	}
+	for _, tt := range rejects {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := resolveWorkspaceGroup(wtRoot, members, tt.arg); err == nil {
+				t.Errorf("resolveWorkspaceGroup(%q) succeeded, want error", tt.arg)
+			}
+		})
 	}
 }
