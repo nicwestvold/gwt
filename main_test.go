@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/nicwestvold/gwt/config"
+	"github.com/nicwestvold/gwt/detect"
 	"github.com/nicwestvold/gwt/git"
 )
 
@@ -154,7 +155,7 @@ func TestRunWorkspaceAdd(t *testing.T) {
 	wtRoot := filepath.Join(root, "worktrees")
 	cfg := &config.Config{
 		Repos: map[string]config.RepoEntry{
-			"acme/app":            {Path: primary, MainBranch: "main"},
+			"acme/app":         {Path: primary, MainBranch: "main"},
 			"acme/app-plugins": {Path: follower, MainBranch: "main"},
 		},
 	}
@@ -284,7 +285,7 @@ func TestRunWorkspaceRemove(t *testing.T) {
 	wtRoot := filepath.Join(root, "worktrees")
 	cfg := &config.Config{
 		Repos: map[string]config.RepoEntry{
-			"acme/app":            {Path: primary, MainBranch: "main"},
+			"acme/app":         {Path: primary, MainBranch: "main"},
 			"acme/app-plugins": {Path: follower, MainBranch: "main"},
 		},
 	}
@@ -383,4 +384,68 @@ func TestResolveWorkspaceGroup(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHookHasWork(t *testing.T) {
+	tests := []struct {
+		name string
+		opts hookOptions
+		want bool
+	}{
+		{"empty", hookOptions{}, false},
+		{"copy files", hookOptions{copyFiles: []string{".env"}}, true},
+		{"version manager", hookOptions{versionManager: "mise"}, true},
+		{"package manager", hookOptions{packageManager: "pnpm"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hookHasWork(tt.opts); got != tt.want {
+				t.Errorf("hookHasWork() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMergeDetected(t *testing.T) {
+	t.Run("fills both unset dimensions", func(t *testing.T) {
+		opts, msgs, detected := mergeDetected(hookOptions{}, detect.Result{VersionManager: "mise", PackageManager: "pnpm"}, false, false)
+		if opts.versionManager != "mise" || opts.packageManager != "pnpm" {
+			t.Errorf("opts = %+v", opts)
+		}
+		if !detected {
+			t.Error("detected = false, want true")
+		}
+		if len(msgs) != 2 {
+			t.Errorf("msgs = %v, want 2 messages", msgs)
+		}
+	})
+
+	t.Run("explicit version manager is not overwritten", func(t *testing.T) {
+		opts, msgs, detected := mergeDetected(hookOptions{versionManager: "asdf"}, detect.Result{VersionManager: "mise", PackageManager: "pnpm"}, true, false)
+		if opts.versionManager != "asdf" {
+			t.Errorf("versionManager = %q, want asdf", opts.versionManager)
+		}
+		if opts.packageManager != "pnpm" {
+			t.Errorf("packageManager = %q, want pnpm", opts.packageManager)
+		}
+		if !detected {
+			t.Error("detected = false, want true (pnpm was detected)")
+		}
+		if len(msgs) != 1 {
+			t.Errorf("msgs = %v, want 1 message (pnpm only)", msgs)
+		}
+	})
+
+	t.Run("nothing detected", func(t *testing.T) {
+		opts, msgs, detected := mergeDetected(hookOptions{}, detect.Result{}, false, false)
+		if opts.versionManager != "" || opts.packageManager != "" {
+			t.Errorf("opts = %+v, want empty", opts)
+		}
+		if detected {
+			t.Error("detected = true, want false")
+		}
+		if len(msgs) != 0 {
+			t.Errorf("msgs = %v, want none", msgs)
+		}
+	})
 }

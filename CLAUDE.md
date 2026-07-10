@@ -26,7 +26,7 @@ go vet ./...             # Run static analysis
 - **`hook/`** — Hook generation. `HookData` struct + Go template produce a `post-checkout` shell script. Installed via `hook.Install()`.
 
 Key commands:
-- `gwt clone <repo> [<dir>]` — clone into a bare-repo worktree structure and configure fetch. Only installs the post-checkout hook if init flags (`--main`, `--copy`, `--version-manager`, `--package-manager`) are explicitly provided; otherwise run `gwt init` afterward
-- `gwt init --main/-m <branch> --copy/-c <file> --version-manager/-v --package-manager/-p` — register repo in config; generate a post-checkout hook only when `-c`, `-p`, or `-v` flags are provided (configures fetch in bare repos)
+- `gwt clone <repo> [<dir>]` — clone into a bare-repo worktree structure and configure fetch. Only installs the post-checkout hook if init flags (`--main`, `--copy`, `--version-manager`, `--package-manager`) are explicitly provided; otherwise run `gwt init` afterward; also accepts `-w`/`--with-hook` to auto-detect the version and package managers and install the hook
+- `gwt init --main/-m <branch> --copy/-c <file> --version-manager/-v --package-manager/-p` — register repo in config; generate a post-checkout hook only when `-c`, `-p`, `-v`, or `-w`/`--with-hook` flags are provided (configures fetch in bare repos); `-w`/`--with-hook` auto-detects the version and package managers and generates a hook when one is found
 - `gwt add [git worktree add flags] <path>` — create worktree (setup handled by post-checkout hook)
 - `gwt <anything else>` — passed directly to `git worktree`

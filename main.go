@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/nicwestvold/gwt/config"
+	"github.com/nicwestvold/gwt/detect"
 	"github.com/nicwestvold/gwt/git"
 	"github.com/nicwestvold/gwt/hook"
 	"github.com/spf13/cobra"
@@ -114,6 +115,56 @@ func setupHook(repo *git.Repo, opts hookOptions) error {
 	return nil
 }
 
+const noHookMsg = "no version or package manager detected — no hook generated (use -c to copy files, or -v/-p to set them manually)"
+const fixItMsg = "If auto-detection got it wrong, re-run with explicit flags, e.g. gwt init -f -v asdf -p yarn"
+
+// fileSourceFor returns a detection source for the repo's main branch content:
+// the working directory when it exists, otherwise the main branch git tree
+// (for a bare repo whose main worktree is not checked out yet).
+func fileSourceFor(repo *git.Repo, mainBranch string) detect.FileSource {
+	basePath := repoBasePath(repo, mainBranch)
+	if fi, err := os.Stat(basePath); err == nil && fi.IsDir() {
+		return detect.DirSource{Root: basePath}
+	}
+	return detect.GitSource{RepoDir: repo.Dir, Ref: git.MainBranchRef(repo.Dir, mainBranch)}
+}
+
+// mergeDetected fills the version/package manager dimensions of opts that were
+// not set explicitly (vmSet/pmSet) from res, returning the updated opts, the
+// user-facing messages to print, and whether anything was auto-detected.
+func mergeDetected(opts hookOptions, res detect.Result, vmSet, pmSet bool) (hookOptions, []string, bool) {
+	var msgs []string
+	detected := false
+	if !vmSet && res.VersionManager != "" {
+		opts.versionManager = res.VersionManager
+		msgs = append(msgs, fmt.Sprintf("auto-detected %s, adding to hook", res.VersionManager))
+		detected = true
+	}
+	if !pmSet && res.PackageManager != "" {
+		opts.packageManager = res.PackageManager
+		msgs = append(msgs, fmt.Sprintf("auto-detected %s, adding to hook", res.PackageManager))
+		detected = true
+	}
+	return opts, msgs, detected
+}
+
+// detectAndMerge runs detection for the repo and merges the result into opts,
+// printing the auto-detected messages. Returns the updated opts and whether
+// anything was auto-detected.
+func detectAndMerge(repo *git.Repo, opts hookOptions, vmSet, pmSet bool) (hookOptions, bool) {
+	res := detect.Detect(fileSourceFor(repo, opts.mainBranch), exec.LookPath)
+	opts, msgs, detected := mergeDetected(opts, res, vmSet, pmSet)
+	for _, m := range msgs {
+		fmt.Println(m)
+	}
+	return opts, detected
+}
+
+// hookHasWork reports whether a generated hook would do anything.
+func hookHasWork(opts hookOptions) bool {
+	return len(opts.copyFiles) > 0 || opts.versionManager != "" || opts.packageManager != ""
+}
+
 // worktreeBaseDir returns the parent directory for new worktrees and the
 // canonical repo name. For bare repos, the base dir is repo.Dir. For regular
 // repos, it is ~/.local/share/gwt/worktrees/<owner>/<repo>.
@@ -138,7 +189,7 @@ var cloneCmd = &cobra.Command{
 	Long: `Clones a repository as a bare repo inside a .bare/ directory,
 creates a .git file pointing to it, configures fetch, and fetches all branches.
 
-If init flags (--main, --copy, --version-manager, --package-manager)
+If init flags (--main, --copy, --version-manager, --package-manager, --with-hook)
 are provided, a post-checkout hook is also created. Otherwise, run 'gwt init'
 afterward to generate the hook.`,
 	Args: cobra.RangeArgs(1, 2),
@@ -174,11 +225,7 @@ afterward to generate the hook.`,
 			packageManager: packageManager,
 		}
 
-		if regErr := registerRepo(repo, opts); regErr != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to register repo in config: %v\n", regErr)
-		}
-
-		initFlags := []string{"main", "copy", "version-manager", "package-manager"}
+		initFlags := []string{"main", "copy", "version-manager", "package-manager", "with-hook"}
 		wantHook := false
 		for _, f := range initFlags {
 			if cmd.Flags().Changed(f) {
@@ -187,11 +234,29 @@ afterward to generate the hook.`,
 			}
 		}
 
+		detected := false
 		if wantHook {
-			if err := setupHook(repo, opts); err != nil {
-				fmt.Fprintf(os.Stderr, "Clone succeeded, but hook setup failed: %v\n", err)
-				fmt.Fprintf(os.Stderr, "You can retry with: cd %s && gwt init\n", absDir)
-				return err
+			opts, detected = detectAndMerge(repo, opts, cmd.Flags().Changed("version-manager"), cmd.Flags().Changed("package-manager"))
+		}
+
+		if regErr := registerRepo(repo, opts); regErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to register repo in config: %v\n", regErr)
+		}
+
+		hookCreated := false
+		if wantHook {
+			if hookHasWork(opts) {
+				if err := setupHook(repo, opts); err != nil {
+					fmt.Fprintf(os.Stderr, "Clone succeeded, but hook setup failed: %v\n", err)
+					fmt.Fprintf(os.Stderr, "You can retry with: cd %s && gwt init\n", absDir)
+					return err
+				}
+				hookCreated = true
+				if detected {
+					fmt.Println(fixItMsg)
+				}
+			} else {
+				fmt.Println(noHookMsg)
 			}
 		}
 
@@ -200,7 +265,7 @@ afterward to generate the hook.`,
 		fmt.Printf("Cloned into %s\n", absDir)
 		fmt.Println("Next steps:")
 		fmt.Println("  cd", absDir)
-		if !wantHook {
+		if !hookCreated {
 			fmt.Println("  gwt init       # generate post-checkout hook")
 		}
 		fmt.Println("  gwt add <branch>")
@@ -335,8 +400,8 @@ Flags:
   -k, --keep-branch   Keep the branch after removing the worktree
 
 Supports all git worktree remove flags (e.g., --force).`,
-	DisableFlagParsing:    true,
-	ValidArgsFunction:     completeWorktreeBranches,
+	DisableFlagParsing: true,
+	ValidArgsFunction:  completeWorktreeBranches,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		for _, a := range args {
 			if a == "--help" || a == "-h" {
@@ -552,11 +617,18 @@ var initCmd = &cobra.Command{
 			force:          force,
 		}
 
+		wantHook := cmd.Flags().Changed("copy") || cmd.Flags().Changed("version-manager") ||
+			cmd.Flags().Changed("package-manager") || cmd.Flags().Changed("with-hook")
+
+		detected := false
+		if wantHook {
+			opts, detected = detectAndMerge(repo, opts, cmd.Flags().Changed("version-manager"), cmd.Flags().Changed("package-manager"))
+		}
+
 		if err := registerRepo(repo, opts); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to register repo in config: %v\n", err)
 		}
 
-		wantHook := cmd.Flags().Changed("copy") || cmd.Flags().Changed("version-manager") || cmd.Flags().Changed("package-manager")
 		if !wantHook {
 			basePath := repoBasePath(repo, mainBranch)
 			if _, err := os.Stat(filepath.Join(basePath, ".env")); err == nil {
@@ -566,7 +638,18 @@ var initCmd = &cobra.Command{
 			return nil
 		}
 
-		return setupHook(repo, opts)
+		if !hookHasWork(opts) {
+			fmt.Println(noHookMsg)
+			return nil
+		}
+
+		if err := setupHook(repo, opts); err != nil {
+			return err
+		}
+		if detected {
+			fmt.Println(fixItMsg)
+		}
+		return nil
 	},
 }
 
@@ -796,11 +879,13 @@ func main() {
 	initCmd.Flags().StringP("version-manager", "v", "", "Version manager (asdf or mise)")
 	initCmd.Flags().StringP("package-manager", "p", "", "Package manager (pnpm, npm, or yarn)")
 	initCmd.Flags().BoolP("force", "f", false, "Overwrite existing post-checkout hook")
+	initCmd.Flags().BoolP("with-hook", "w", false, "Auto-detect managers and generate a post-checkout hook")
 
 	cloneCmd.Flags().StringP("main", "m", "main", "Set the main branch name")
 	cloneCmd.Flags().StringSliceP("copy", "c", nil, "Files to copy to new worktrees (repeatable)")
 	cloneCmd.Flags().StringP("version-manager", "v", "", "Version manager (asdf or mise)")
 	cloneCmd.Flags().StringP("package-manager", "p", "", "Package manager (pnpm, npm, or yarn)")
+	cloneCmd.Flags().BoolP("with-hook", "w", false, "Auto-detect managers and generate a post-checkout hook")
 	rootCmd.Version = resolveVersion()
 	rootCmd.AddCommand(addCmd)
 	rootCmd.AddCommand(cloneCmd)
