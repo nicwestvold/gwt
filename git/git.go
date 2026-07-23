@@ -581,13 +581,21 @@ func renderWorktreeList(plain, activePath string, color bool) string {
 	return b.String()
 }
 
-// renderSizedWorktreeList renders the four-column sized table:
-// path | sha | size | annotation, followed by a total row.
-func renderSizedWorktreeList(infos []WorktreeInfo, sizes []disk.Result, activePath string, color bool) string {
-	pathW := len("total")
+// renderWorktreeTable renders the worktree list as an aligned table with the
+// active worktree marked. Columns are path | [size] | sha | annotation. When
+// sizes is nil the size column and total row are omitted (bare `ls`);
+// otherwise sizes[i] corresponds to infos[i] and a size column plus a total
+// row are included (`ls -s`).
+func renderWorktreeTable(infos []WorktreeInfo, sizes []disk.Result, activePath string, color bool) string {
+	withSize := sizes != nil
+
+	pathW := 0
+	if withSize {
+		pathW = len("total")
+	}
 	shaW := 0
-	sizeStrs := make([]string, len(infos))
 	sizeW := 0
+	sizeStrs := make([]string, len(infos))
 	var totalBytes int64
 	anyApprox := false
 	for i, in := range infos {
@@ -597,29 +605,43 @@ func renderSizedWorktreeList(infos []WorktreeInfo, sizes []disk.Result, activePa
 		if len(in.SHA) > shaW {
 			shaW = len(in.SHA)
 		}
-		sizeStrs[i] = disk.Format(sizes[i])
-		if len(sizeStrs[i]) > sizeW {
-			sizeW = len(sizeStrs[i])
-		}
-		totalBytes += sizes[i].Bytes
-		if sizes[i].Skipped > 0 {
-			anyApprox = true
+		if withSize {
+			sizeStrs[i] = disk.Format(sizes[i])
+			if len(sizeStrs[i]) > sizeW {
+				sizeW = len(sizeStrs[i])
+			}
+			totalBytes += sizes[i].Bytes
+			if sizes[i].Skipped > 0 {
+				anyApprox = true
+			}
 		}
 	}
-	totalStr := disk.FormatApprox(totalBytes, anyApprox)
-	if len(totalStr) > sizeW {
-		sizeW = len(totalStr)
+
+	totalStr := ""
+	if withSize {
+		totalStr = disk.FormatApprox(totalBytes, anyApprox)
+		if len(totalStr) > sizeW {
+			sizeW = len(totalStr)
+		}
 	}
 
 	var b strings.Builder
 	for i, in := range infos {
-		content := fmt.Sprintf("%-*s  %*s  %-*s  %s",
-			pathW, in.Path, sizeW, sizeStrs[i], shaW, in.SHA, in.Annotation())
+		var content string
+		if withSize {
+			content = fmt.Sprintf("%-*s  %*s  %-*s  %s",
+				pathW, in.Path, sizeW, sizeStrs[i], shaW, in.SHA, in.Annotation())
+		} else {
+			content = fmt.Sprintf("%-*s  %-*s  %s",
+				pathW, in.Path, shaW, in.SHA, in.Annotation())
+		}
 		active := activePath != "" && in.Path == activePath
 		b.WriteString(decorateLine(strings.TrimRight(content, " "), active, color) + "\n")
 	}
-	totalContent := fmt.Sprintf("%-*s  %*s", pathW, "total", sizeW, totalStr)
-	b.WriteString(decorateLine(strings.TrimRight(totalContent, " "), false, color) + "\n")
+	if withSize {
+		totalContent := fmt.Sprintf("%-*s  %*s", pathW, "total", sizeW, totalStr)
+		b.WriteString(decorateLine(strings.TrimRight(totalContent, " "), false, color) + "\n")
+	}
 	return b.String()
 }
 
@@ -658,7 +680,7 @@ func (r *Repo) PrintSizedWorktreeList() error {
 		}(i)
 	}
 	wg.Wait()
-	fmt.Print(renderSizedWorktreeList(infos, sizes, currentWorktreeTop(), shouldColor()))
+	fmt.Print(renderWorktreeTable(infos, sizes, currentWorktreeTop(), shouldColor()))
 	return nil
 }
 

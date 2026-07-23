@@ -1105,16 +1105,16 @@ func TestWorktreeInfoAnnotation(t *testing.T) {
 	}
 }
 
-func TestRenderSizedWorktreeList(t *testing.T) {
+func TestRenderWorktreeTableSized(t *testing.T) {
 	infos := []WorktreeInfo{
 		{Path: "/repo/main", SHA: "27233475638", Branch: "main"},
 		{Path: "/repo/feature-x", SHA: "00666edca69", Branch: "feature-x"},
 	}
 	sizes := []disk.Result{
-		{Bytes: 4831838208},          // ~4.5 GiB
+		{Bytes: 4831838208},             // ~4.5 GiB
 		{Bytes: 1288490188, Skipped: 2}, // ~1.2 GiB, approximate
 	}
-	out := renderSizedWorktreeList(infos, sizes, "/repo/main", false)
+	out := renderWorktreeTable(infos, sizes, "/repo/main", false)
 
 	if !strings.Contains(out, "* /repo/main") {
 		t.Errorf("active marker missing:\n%s", out)
@@ -1125,18 +1125,57 @@ func TestRenderSizedWorktreeList(t *testing.T) {
 	if !strings.Contains(out, "~1.2 GiB") {
 		t.Errorf("approximate marker missing on feature-x:\n%s", out)
 	}
-	// Total present and approximate (because a contributing row was approximate).
 	if !strings.Contains(out, "total") || !strings.Contains(out, "~") {
 		t.Errorf("total row wrong:\n%s", out)
 	}
 }
 
-func TestRenderSizedColorActiveRow(t *testing.T) {
+func TestRenderWorktreeTableSizedColorActiveRow(t *testing.T) {
 	infos := []WorktreeInfo{{Path: "/repo/main", SHA: "abc", Branch: "main"}}
 	sizes := []disk.Result{{Bytes: 1024}}
-	out := renderSizedWorktreeList(infos, sizes, "/repo/main", true)
+	out := renderWorktreeTable(infos, sizes, "/repo/main", true)
 	if !strings.Contains(out, "\033[32m") {
 		t.Errorf("expected green on active row:\n%q", out)
+	}
+}
+
+func TestRenderWorktreeTableBare(t *testing.T) {
+	const green = "\033[32m"
+	const reset = "\033[0m"
+	infos := []WorktreeInfo{
+		{Path: "/repo/main", SHA: "27233475638", Branch: "main"},
+		{Path: "/repo/wt-detached", SHA: "00666edca69", Detached: true},
+		{Path: "/repo/bare", Bare: true},
+		{Path: "/repo/locked-wt", SHA: "689fff37a9c", Branch: "feature", Locked: true},
+	}
+
+	// Bare mode: no size column, no total row.
+	out := renderWorktreeTable(infos, nil, "/repo/main", false)
+	if strings.Contains(out, "total") {
+		t.Errorf("bare mode should have no total row:\n%s", out)
+	}
+	for _, want := range []string{"[main]", "(detached HEAD)", "(bare)", "[feature] locked"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing annotation %q:\n%s", want, out)
+		}
+	}
+	if !strings.HasPrefix(out, "* /repo/main") {
+		t.Errorf("active row not marked first:\n%s", out)
+	}
+	// Non-active rows are indented, not starred.
+	if !strings.Contains(out, "  /repo/bare") {
+		t.Errorf("bare row not indented:\n%s", out)
+	}
+
+	// Color gating on the active row.
+	colored := renderWorktreeTable(infos, nil, "/repo/main", true)
+	if !strings.Contains(colored, green+"* /repo/main") || !strings.Contains(colored, reset) {
+		t.Errorf("active row not green:\n%q", colored)
+	}
+
+	// Empty input yields empty string (parity with old renderWorktreeList).
+	if got := renderWorktreeTable(nil, nil, "", false); got != "" {
+		t.Errorf("empty infos = %q, want \"\"", got)
 	}
 }
 
