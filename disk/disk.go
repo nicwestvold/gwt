@@ -4,7 +4,6 @@ package disk
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -57,8 +56,9 @@ func Size(root string) (Result, error) {
 			if st, ok := info.Sys().(*syscall.Stat_t); ok {
 				atomic.AddInt64(&bytes, st.Blocks*512)
 			}
-			// Directory (not a symlink to one — e.IsDir is type-based).
-			if info.Mode()&fs.ModeSymlink == 0 && e.IsDir() {
+			// Directory. e.IsDir is type-based (lstat), so a symlink to a
+			// directory reports false here and is counted as the link only.
+			if e.IsDir() {
 				sub := filepath.Join(dir, e.Name())
 				wg.Add(1)
 				select {

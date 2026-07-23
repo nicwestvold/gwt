@@ -449,3 +449,27 @@ func TestMergeDetected(t *testing.T) {
 		}
 	})
 }
+
+func TestIsSizeFlag(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"short", []string{"-s"}, true},
+		{"long", []string{"--size"}, true},
+		{"none", nil, false},
+		{"empty", []string{}, false},
+		{"other flag", []string{"--porcelain"}, false},
+		{"size plus other", []string{"-s", "--porcelain"}, false},
+		{"two size flags", []string{"-s", "--size"}, false},
+		{"positional", []string{"main"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isSizeFlag(c.args); got != c.want {
+				t.Errorf("isSizeFlag(%v) = %v, want %v", c.args, got, c.want)
+			}
+		})
+	}
+}
