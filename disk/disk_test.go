@@ -139,3 +139,37 @@ func TestSizeMatchesDu(t *testing.T) {
 		t.Errorf("our %d KiB vs du %d KiB (diff %d)", ourKB, duKB, diff)
 	}
 }
+
+func TestFormatIEC(t *testing.T) {
+	cases := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0 B"},
+		{512, "512 B"},
+		{1024, "1.0 KiB"},
+		{1536, "1.5 KiB"},
+		{5 * 1024 * 1024, "5.0 MiB"},
+		{5153960550, "4.8 GiB"},
+	}
+	for _, c := range cases {
+		if got := FormatIEC(c.in); got != c.want {
+			t.Errorf("FormatIEC(%d) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestFormatApproxAndResult(t *testing.T) {
+	if got := FormatApprox(1024, false); got != "1.0 KiB" {
+		t.Errorf("FormatApprox exact = %q", got)
+	}
+	if got := FormatApprox(1024, true); got != "~1.0 KiB" {
+		t.Errorf("FormatApprox approx = %q", got)
+	}
+	if got := Format(Result{Bytes: 1024, Skipped: 0}); got != "1.0 KiB" {
+		t.Errorf("Format clean = %q", got)
+	}
+	if got := Format(Result{Bytes: 1024, Skipped: 3}); got != "~1.0 KiB" {
+		t.Errorf("Format skipped = %q", got)
+	}
+}

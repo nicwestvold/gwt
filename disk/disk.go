@@ -3,6 +3,7 @@
 package disk
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -77,4 +78,33 @@ func Size(root string) (Result, error) {
 	walk(root)
 	wg.Wait()
 	return Result{Bytes: bytes, Skipped: int(skipped)}, nil
+}
+
+// FormatIEC renders a byte count in binary IEC units (KiB/MiB/GiB…).
+func FormatIEC(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// FormatApprox renders b in IEC units, prefixing "~" when the value is a lower
+// bound (some entries could not be measured).
+func FormatApprox(b int64, approximate bool) string {
+	s := FormatIEC(b)
+	if approximate {
+		return "~" + s
+	}
+	return s
+}
+
+// Format renders a Result, marking it approximate when entries were skipped.
+func Format(r Result) string {
+	return FormatApprox(r.Bytes, r.Skipped > 0)
 }
