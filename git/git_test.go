@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/nicwestvold/gwt/disk"
 )
 
 func TestBranchToDir(t *testing.T) {
@@ -1084,6 +1086,41 @@ func TestWorktreeInfoAnnotation(t *testing.T) {
 		if got := c.in.Annotation(); got != c.want {
 			t.Errorf("Annotation(%+v) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+func TestRenderSizedWorktreeList(t *testing.T) {
+	infos := []WorktreeInfo{
+		{Path: "/repo/main", SHA: "27233475638", Branch: "main"},
+		{Path: "/repo/feature-x", SHA: "00666edca69", Branch: "feature-x"},
+	}
+	sizes := []disk.Result{
+		{Bytes: 4831838208},          // ~4.5 GiB
+		{Bytes: 1288490188, Skipped: 2}, // ~1.2 GiB, approximate
+	}
+	out := renderSizedWorktreeList(infos, sizes, "/repo/main", false)
+
+	if !strings.Contains(out, "* /repo/main") {
+		t.Errorf("active marker missing:\n%s", out)
+	}
+	if !strings.Contains(out, "[main]") || !strings.Contains(out, "[feature-x]") {
+		t.Errorf("branch annotations missing:\n%s", out)
+	}
+	if !strings.Contains(out, "~1.2 GiB") {
+		t.Errorf("approximate marker missing on feature-x:\n%s", out)
+	}
+	// Total present and approximate (because a contributing row was approximate).
+	if !strings.Contains(out, "total") || !strings.Contains(out, "~") {
+		t.Errorf("total row wrong:\n%s", out)
+	}
+}
+
+func TestRenderSizedColorActiveRow(t *testing.T) {
+	infos := []WorktreeInfo{{Path: "/repo/main", SHA: "abc", Branch: "main"}}
+	sizes := []disk.Result{{Bytes: 1024}}
+	out := renderSizedWorktreeList(infos, sizes, "/repo/main", true)
+	if !strings.Contains(out, "\033[32m") {
+		t.Errorf("expected green on active row:\n%q", out)
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/nicwestvold/gwt/disk"
 )
 
 type Repo struct {
@@ -525,6 +527,21 @@ func parseWorktreeList(output string) []WorktreeEntry {
 	return entries
 }
 
+// decorateLine prepends the active/inactive marker and, on a color terminal,
+// wraps the active line in green. Shared by the plain and sized list renders.
+func decorateLine(content string, active, color bool) string {
+	const green = "\033[32m"
+	const reset = "\033[0m"
+	switch {
+	case active && color:
+		return green + "* " + content + reset
+	case active:
+		return "* " + content
+	default:
+		return "  " + content
+	}
+}
+
 // renderWorktreeList annotates plain `git worktree list` output, marking the
 // line for activePath with a "* " prefix (green when color is true) and
 // indenting all other lines with two spaces to keep paths aligned. A line is
@@ -532,9 +549,6 @@ func parseWorktreeList(output string) []WorktreeEntry {
 // trailing-space check prevents a shared prefix (e.g. /a/b vs /a/bc) from
 // matching the wrong worktree.
 func renderWorktreeList(plain, activePath string, color bool) string {
-	const green = "\033[32m"
-	const reset = "\033[0m"
-
 	plain = strings.TrimRight(plain, "\n")
 	if plain == "" {
 		return ""
@@ -544,15 +558,50 @@ func renderWorktreeList(plain, activePath string, color bool) string {
 	for _, line := range strings.Split(plain, "\n") {
 		active := activePath != "" &&
 			(line == activePath || strings.HasPrefix(line, activePath+" "))
-		switch {
-		case active && color:
-			b.WriteString(green + "* " + line + reset + "\n")
-		case active:
-			b.WriteString("* " + line + "\n")
-		default:
-			b.WriteString("  " + line + "\n")
+		b.WriteString(decorateLine(line, active, color) + "\n")
+	}
+	return b.String()
+}
+
+// renderSizedWorktreeList renders the four-column sized table:
+// path | sha | size | annotation, followed by a total row.
+func renderSizedWorktreeList(infos []WorktreeInfo, sizes []disk.Result, activePath string, color bool) string {
+	pathW := len("total")
+	shaW := 0
+	sizeStrs := make([]string, len(infos))
+	sizeW := 0
+	var totalBytes int64
+	anyApprox := false
+	for i, in := range infos {
+		if len(in.Path) > pathW {
+			pathW = len(in.Path)
+		}
+		if len(in.SHA) > shaW {
+			shaW = len(in.SHA)
+		}
+		sizeStrs[i] = disk.Format(sizes[i])
+		if len(sizeStrs[i]) > sizeW {
+			sizeW = len(sizeStrs[i])
+		}
+		totalBytes += sizes[i].Bytes
+		if sizes[i].Skipped > 0 {
+			anyApprox = true
 		}
 	}
+	totalStr := disk.FormatApprox(totalBytes, anyApprox)
+	if len(totalStr) > sizeW {
+		sizeW = len(totalStr)
+	}
+
+	var b strings.Builder
+	for i, in := range infos {
+		content := fmt.Sprintf("%-*s  %-*s  %*s  %s",
+			pathW, in.Path, shaW, in.SHA, sizeW, sizeStrs[i], in.Annotation())
+		active := activePath != "" && in.Path == activePath
+		b.WriteString(decorateLine(strings.TrimRight(content, " "), active, color) + "\n")
+	}
+	totalContent := fmt.Sprintf("%-*s  %-*s  %*s", pathW, "total", shaW, "", sizeW, totalStr)
+	b.WriteString(decorateLine(strings.TrimRight(totalContent, " "), false, color) + "\n")
 	return b.String()
 }
 
