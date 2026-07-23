@@ -1109,7 +1109,15 @@ func TestRenderWorktreeTableBare(t *testing.T) {
 		t.Errorf("active row not green:\n%q", colored)
 	}
 
-	// Empty input yields empty string (parity with old renderWorktreeList).
+	// No active path (e.g. run outside any worktree): every row indented, none starred.
+	noActive := renderWorktreeTable(infos, nil, "", false)
+	for _, line := range strings.Split(strings.TrimRight(noActive, "\n"), "\n") {
+		if strings.HasPrefix(line, "* ") {
+			t.Errorf("no active path should mark no row, got:\n%s", noActive)
+		}
+	}
+
+	// Empty input yields an empty string.
 	if got := renderWorktreeTable(nil, nil, "", false); got != "" {
 		t.Errorf("empty infos = %q, want \"\"", got)
 	}
