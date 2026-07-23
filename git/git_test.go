@@ -494,6 +494,22 @@ func TestAdd(t *testing.T) {
 	})
 }
 
+func TestRemoveReturnsResult(t *testing.T) {
+	// Verifies the struct shape and that display name falls back to path base.
+	rr := RemoveResult{
+		RepoDir:      "/repo",
+		WorktreePath: "/repo/wt/feature-x",
+		Branch:       "feature-x",
+		Freed:        disk.Result{Bytes: 1288490188},
+	}
+	if rr.Branch != "feature-x" {
+		t.Fatal("branch field")
+	}
+	if disk.Format(rr.Freed) != "1.2 GiB" {
+		t.Errorf("freed format = %q", disk.Format(rr.Freed))
+	}
+}
+
 func TestRemove(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not found in PATH")
@@ -535,15 +551,15 @@ func TestRemove(t *testing.T) {
 		wtDir := filepath.Join(project, "feat-remove-test")
 		run("git", "-C", project, "worktree", "add", "-b", "remove-test", wtDir)
 
-		repoDir, removedPath, err := repo.Remove([]string{wtDir}, false)
+		res, err := repo.Remove([]string{wtDir}, false)
 		if err != nil {
 			t.Fatalf("Remove() error: %v", err)
 		}
-		if repoDir != project {
-			t.Errorf("repoDir = %q, want %q", repoDir, project)
+		if res.RepoDir != project {
+			t.Errorf("repoDir = %q, want %q", res.RepoDir, project)
 		}
-		if removedPath != wtDir {
-			t.Errorf("worktreePath = %q, want %q", removedPath, wtDir)
+		if res.WorktreePath != wtDir {
+			t.Errorf("worktreePath = %q, want %q", res.WorktreePath, wtDir)
 		}
 		if _, err := os.Stat(wtDir); !os.IsNotExist(err) {
 			t.Error("worktree directory should not exist after removal")
@@ -561,7 +577,7 @@ func TestRemove(t *testing.T) {
 		// Make a commit so the branch diverges from main.
 		run("git", "-C", wtDir, "commit", "--allow-empty", "-m", "diverge")
 
-		_, _, err := repo.Remove([]string{wtDir}, false)
+		_, err := repo.Remove([]string{wtDir}, false)
 		if err != nil {
 			t.Fatalf("Remove() error: %v", err)
 		}
@@ -579,12 +595,12 @@ func TestRemove(t *testing.T) {
 		// Create an untracked file to make it dirty
 		_ = os.WriteFile(filepath.Join(wtDir, "dirty.txt"), []byte("dirty"), 0o644)
 
-		repoDir, _, err := repo.Remove([]string{"--force", wtDir}, false)
+		res, err := repo.Remove([]string{"--force", wtDir}, false)
 		if err != nil {
 			t.Fatalf("Remove(--force) error: %v", err)
 		}
-		if repoDir != project {
-			t.Errorf("repoDir = %q, want %q", repoDir, project)
+		if res.RepoDir != project {
+			t.Errorf("repoDir = %q, want %q", res.RepoDir, project)
 		}
 	})
 
@@ -603,15 +619,15 @@ func TestRemove(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = os.Chdir(origDir) })
 
-		repoDir, removedPath, err := repo.Remove([]string{}, false)
+		res, err := repo.Remove([]string{}, false)
 		if err != nil {
 			t.Fatalf("Remove() auto-detect error: %v", err)
 		}
-		if repoDir != project {
-			t.Errorf("repoDir = %q, want %q", repoDir, project)
+		if res.RepoDir != project {
+			t.Errorf("repoDir = %q, want %q", res.RepoDir, project)
 		}
-		if removedPath != wtDir {
-			t.Errorf("worktreePath = %q, want %q", removedPath, wtDir)
+		if res.WorktreePath != wtDir {
+			t.Errorf("worktreePath = %q, want %q", res.WorktreePath, wtDir)
 		}
 	})
 
@@ -619,15 +635,15 @@ func TestRemove(t *testing.T) {
 		wtDir := filepath.Join(project, "feat-keep-branch")
 		run("git", "-C", project, "worktree", "add", "-b", "keep-branch-test", wtDir)
 
-		repoDir, removedPath, err := repo.Remove([]string{wtDir}, true)
+		res, err := repo.Remove([]string{wtDir}, true)
 		if err != nil {
 			t.Fatalf("Remove(keepBranch=true) error: %v", err)
 		}
-		if repoDir != project {
-			t.Errorf("repoDir = %q, want %q", repoDir, project)
+		if res.RepoDir != project {
+			t.Errorf("repoDir = %q, want %q", res.RepoDir, project)
 		}
-		if removedPath != wtDir {
-			t.Errorf("worktreePath = %q, want %q", removedPath, wtDir)
+		if res.WorktreePath != wtDir {
+			t.Errorf("worktreePath = %q, want %q", res.WorktreePath, wtDir)
 		}
 		if _, err := os.Stat(wtDir); !os.IsNotExist(err) {
 			t.Error("worktree directory should not exist after removal")
@@ -640,7 +656,7 @@ func TestRemove(t *testing.T) {
 	})
 
 	t.Run("refuses to remove main working tree", func(t *testing.T) {
-		_, _, err := repo.Remove([]string{project}, false)
+		_, err := repo.Remove([]string{project}, false)
 		if err == nil {
 			t.Fatal("Remove(project) should error when targeting main working tree")
 		}

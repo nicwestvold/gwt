@@ -11,6 +11,7 @@ import (
 
 	"github.com/nicwestvold/gwt/config"
 	"github.com/nicwestvold/gwt/detect"
+	"github.com/nicwestvold/gwt/disk"
 	"github.com/nicwestvold/gwt/git"
 	"github.com/nicwestvold/gwt/hook"
 	"github.com/spf13/cobra"
@@ -472,7 +473,7 @@ Supports all git worktree remove flags (e.g., --force).`,
 			}
 		}
 
-		repoDir, worktreePath, err := repo.Remove(resolvedArgs, keepBranch)
+		res, err := repo.Remove(resolvedArgs, keepBranch)
 		if err != nil {
 			return err
 		}
@@ -481,12 +482,22 @@ Supports all git worktree remove flags (e.g., --force).`,
 		dataDir, dataErr := config.DataDir()
 		if dataErr == nil {
 			worktreeRoot := filepath.Join(dataDir, "worktrees")
-			if strings.HasPrefix(worktreePath, worktreeRoot+string(filepath.Separator)) {
-				git.CleanEmptyParents(filepath.Dir(worktreePath), worktreeRoot)
+			if strings.HasPrefix(res.WorktreePath, worktreeRoot+string(filepath.Separator)) {
+				git.CleanEmptyParents(filepath.Dir(res.WorktreePath), worktreeRoot)
 			}
 		}
 
-		git.WriteCdFile(repoDir)
+		name := res.Branch
+		if name == "" {
+			name = filepath.Base(res.WorktreePath)
+		}
+		if res.Freed.Bytes > 0 {
+			fmt.Printf("removed worktree %s — freed %s\n", name, disk.Format(res.Freed))
+		} else {
+			fmt.Printf("removed worktree %s\n", name)
+		}
+
+		git.WriteCdFile(res.RepoDir)
 		return nil
 	},
 }

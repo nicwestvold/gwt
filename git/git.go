@@ -94,10 +94,18 @@ func (r *Repo) Passthrough(args []string) error {
 	return cmd.Run()
 }
 
+// RemoveResult reports the outcome of removing a single worktree.
+type RemoveResult struct {
+	RepoDir      string
+	WorktreePath string
+	Branch       string      // "" if detached
+	Freed        disk.Result // on-disk space reclaimed
+}
+
 // Remove removes a worktree. If no positional path argument is provided,
 // it auto-detects the current worktree directory. Returns the repo dir
 // (for cd-back) and the removed worktree path (for cleanup).
-func (r *Repo) Remove(args []string, keepBranch bool) (repoDir, worktreePath string, err error) {
+func (r *Repo) Remove(args []string, keepBranch bool) (RemoveResult, error) {
 	// Separate flags from positional args, respecting "--" separator.
 	var flags []string
 	var positional []string
@@ -115,6 +123,7 @@ func (r *Repo) Remove(args []string, keepBranch bool) (repoDir, worktreePath str
 		}
 	}
 
+	var worktreePath string
 	if len(positional) == 0 {
 		// Auto-detect current worktree from the user's working directory.
 		var buf, stderr bytes.Buffer
@@ -122,14 +131,15 @@ func (r *Repo) Remove(args []string, keepBranch bool) (repoDir, worktreePath str
 		cmd.Stdout = &buf
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
-			return "", "", fmt.Errorf("not inside a worktree: %w (%s)", err, strings.TrimSpace(stderr.String()))
+			return RemoveResult{}, fmt.Errorf("not inside a worktree: %w (%s)", err, strings.TrimSpace(stderr.String()))
 		}
 		worktreePath = strings.TrimSpace(buf.String())
 	} else {
 		// Resolve the provided path to absolute.
+		var err error
 		worktreePath, err = filepath.Abs(positional[0])
 		if err != nil {
-			return "", "", fmt.Errorf("failed to resolve path: %w", err)
+			return RemoveResult{}, fmt.Errorf("failed to resolve path: %w", err)
 		}
 	}
 
@@ -145,7 +155,7 @@ func (r *Repo) Remove(args []string, keepBranch bool) (repoDir, worktreePath str
 		resolvedDir = resolved
 	}
 	if filepath.Clean(worktreePath) == filepath.Clean(resolvedDir) {
-		return "", "", fmt.Errorf("refusing to remove the main working tree: %s", worktreePath)
+		return RemoveResult{}, fmt.Errorf("refusing to remove the main working tree: %s", worktreePath)
 	}
 
 	// Detect the branch checked out in the worktree before removal.
@@ -163,6 +173,8 @@ func (r *Repo) Remove(args []string, keepBranch bool) (repoDir, worktreePath str
 		}
 	}
 
+	freed, _ := disk.Size(worktreePath) // best-effort; never blocks removal
+
 	gitArgs := []string{"worktree", "remove"}
 	gitArgs = append(gitArgs, flags...)
 	gitArgs = append(gitArgs, worktreePath)
@@ -173,7 +185,7 @@ func (r *Repo) Remove(args []string, keepBranch bool) (repoDir, worktreePath str
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
-		return "", "", fmt.Errorf("git worktree remove failed: %w", err)
+		return RemoveResult{}, fmt.Errorf("git worktree remove failed: %w", err)
 	}
 
 	// Best-effort branch deletion (non-force).
@@ -187,7 +199,12 @@ func (r *Repo) Remove(args []string, keepBranch bool) (repoDir, worktreePath str
 		}
 	}
 
-	return r.Dir, worktreePath, nil
+	return RemoveResult{
+		RepoDir:      r.Dir,
+		WorktreePath: worktreePath,
+		Branch:       branch,
+		Freed:        freed,
+	}, nil
 }
 
 // CleanEmptyParents removes empty directories walking up from dir,
