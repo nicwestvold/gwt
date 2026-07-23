@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/nicwestvold/gwt/disk"
 )
@@ -619,6 +620,28 @@ func (r *Repo) PrintWorktreeList() error {
 	}
 
 	fmt.Print(renderWorktreeList(buf.String(), currentWorktreeTop(), shouldColor()))
+	return nil
+}
+
+// PrintSizedWorktreeList prints the worktree list with an on-disk size column.
+// Sizes are computed concurrently across worktrees.
+func (r *Repo) PrintSizedWorktreeList() error {
+	infos, err := r.ListWorktreesFull()
+	if err != nil {
+		return err
+	}
+	sizes := make([]disk.Result, len(infos))
+	var wg sync.WaitGroup
+	for i := range infos {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			res, _ := disk.Size(infos[i].Path) // best-effort; errors → zero size
+			sizes[i] = res
+		}(i)
+	}
+	wg.Wait()
+	fmt.Print(renderSizedWorktreeList(infos, sizes, currentWorktreeTop(), shouldColor()))
 	return nil
 }
 

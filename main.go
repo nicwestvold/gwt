@@ -873,6 +873,11 @@ func ensureRegistered(repo *git.Repo, name string) error {
 	return nil
 }
 
+// isSizeFlag reports whether args is exactly the size flag for `gwt ls`.
+func isSizeFlag(args []string) bool {
+	return len(args) == 1 && (args[0] == "-s" || args[0] == "--size")
+}
+
 func main() {
 	initCmd.Flags().StringP("main", "m", "main", "Set the main branch name")
 	initCmd.Flags().StringSliceP("copy", "c", nil, "Files to copy to new worktrees (repeatable)")
@@ -926,14 +931,23 @@ func main() {
 					os.Exit(1)
 				}
 				// Enhance the bare `gwt list` (and its `ls` alias) by marking
-				// the active worktree. Any extra flags/args (e.g. --porcelain)
-				// fall through to plain git so scripting behavior is preserved.
-				if subcmd == "list" && len(os.Args) == 2 {
-					if err := repo.PrintWorktreeList(); err != nil {
-						fmt.Fprintf(os.Stderr, "error: %v\n", err)
-						os.Exit(git.ExitCode(err))
+				// the active worktree. `-s`/`--size` adds an on-disk size column.
+				// Any other flags fall through to plain git untouched.
+				if subcmd == "list" {
+					if len(os.Args) == 2 {
+						if err := repo.PrintWorktreeList(); err != nil {
+							fmt.Fprintf(os.Stderr, "error: %v\n", err)
+							os.Exit(git.ExitCode(err))
+						}
+						return
 					}
-					return
+					if isSizeFlag(os.Args[2:]) {
+						if err := repo.PrintSizedWorktreeList(); err != nil {
+							fmt.Fprintf(os.Stderr, "error: %v\n", err)
+							os.Exit(git.ExitCode(err))
+						}
+						return
+					}
 				}
 				if err := repo.Passthrough(os.Args[1:]); err != nil {
 					os.Exit(git.ExitCode(err))
