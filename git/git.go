@@ -560,27 +560,6 @@ func decorateLine(content string, active, color bool) string {
 	}
 }
 
-// renderWorktreeList annotates plain `git worktree list` output, marking the
-// line for activePath with a "* " prefix (green when color is true) and
-// indenting all other lines with two spaces to keep paths aligned. A line is
-// considered active when its path field exactly matches activePath; the
-// trailing-space check prevents a shared prefix (e.g. /a/b vs /a/bc) from
-// matching the wrong worktree.
-func renderWorktreeList(plain, activePath string, color bool) string {
-	plain = strings.TrimRight(plain, "\n")
-	if plain == "" {
-		return ""
-	}
-
-	var b strings.Builder
-	for _, line := range strings.Split(plain, "\n") {
-		active := activePath != "" &&
-			(line == activePath || strings.HasPrefix(line, activePath+" "))
-		b.WriteString(decorateLine(line, active, color) + "\n")
-	}
-	return b.String()
-}
-
 // renderWorktreeTable renders the worktree list as an aligned table with the
 // active worktree marked. Columns are path | [size] | sha | annotation. When
 // sizes is nil the size column and total row are omitted (bare `ls`);
@@ -645,20 +624,17 @@ func renderWorktreeTable(infos []WorktreeInfo, sizes []disk.Result, activePath s
 	return b.String()
 }
 
-// PrintWorktreeList writes `git worktree list` to stdout with the worktree
-// containing the caller's current directory marked. Color is enabled only on a
-// terminal and when NO_COLOR is unset.
+// PrintWorktreeList prints the worktree list with the worktree containing the
+// caller's current directory marked. It is self-rendered from
+// `git worktree list --porcelain` (via ListWorktreesFull) at functional parity
+// with git's plain output. Color is enabled only on a terminal and when
+// NO_COLOR is unset.
 func (r *Repo) PrintWorktreeList() error {
-	var buf, stderr bytes.Buffer
-	cmd := exec.Command("git", "worktree", "list")
-	cmd.Dir = r.Dir
-	cmd.Stdout = &buf
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git worktree list failed: %w (%s)", err, strings.TrimSpace(stderr.String()))
+	infos, err := r.ListWorktreesFull()
+	if err != nil {
+		return err
 	}
-
-	fmt.Print(renderWorktreeList(buf.String(), currentWorktreeTop(), shouldColor()))
+	fmt.Print(renderWorktreeTable(infos, nil, currentWorktreeTop(), shouldColor()))
 	return nil
 }
 
