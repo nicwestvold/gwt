@@ -611,3 +611,93 @@ func (r *Repo) FindWorktreeByBranch(branch string) (string, bool, error) {
 	}
 	return "", false, nil
 }
+
+// shaAbbrevLen is the abbreviated-SHA width shown in the sized worktree list.
+const shaAbbrevLen = 11
+
+// WorktreeInfo is a complete parse of one `git worktree list --porcelain`
+// entry — unlike WorktreeEntry, it retains detached/bare/locked rows.
+type WorktreeInfo struct {
+	Path     string
+	SHA      string // abbreviated HEAD sha ("" for a bare repo)
+	Branch   string // short name; "" if detached or bare
+	Detached bool
+	Bare     bool
+	Locked   bool
+	Prunable bool
+}
+
+// Annotation renders the trailing column git shows for this worktree.
+func (w WorktreeInfo) Annotation() string {
+	var a string
+	switch {
+	case w.Bare:
+		a = "(bare)"
+	case w.Detached:
+		a = "(detached HEAD)"
+	default:
+		a = "[" + w.Branch + "]"
+	}
+	if w.Locked {
+		a += " locked"
+	}
+	if w.Prunable {
+		a += " prunable"
+	}
+	return a
+}
+
+func parseWorktreeListFull(output string) []WorktreeInfo {
+	var out []WorktreeInfo
+	var cur WorktreeInfo
+	started := false
+	flush := func() {
+		if started && cur.Path != "" {
+			out = append(out, cur)
+		}
+		cur = WorktreeInfo{}
+		started = false
+	}
+	for _, line := range strings.Split(output, "\n") {
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			flush()
+			cur.Path = strings.TrimPrefix(line, "worktree ")
+			started = true
+		case strings.HasPrefix(line, "HEAD "):
+			sha := strings.TrimPrefix(line, "HEAD ")
+			if len(sha) > shaAbbrevLen {
+				sha = sha[:shaAbbrevLen]
+			}
+			cur.SHA = sha
+		case strings.HasPrefix(line, "branch "):
+			cur.Branch = strings.TrimPrefix(strings.TrimPrefix(line, "branch "), "refs/heads/")
+		case line == "detached":
+			cur.Detached = true
+		case line == "bare":
+			cur.Bare = true
+		case line == "locked" || strings.HasPrefix(line, "locked "):
+			cur.Locked = true
+		case line == "prunable" || strings.HasPrefix(line, "prunable "):
+			cur.Prunable = true
+		case line == "":
+			flush()
+		}
+	}
+	flush()
+	return out
+}
+
+// ListWorktreesFull returns every worktree (including detached/bare) with its
+// abbreviated sha and lock/prune flags.
+func (r *Repo) ListWorktreesFull() ([]WorktreeInfo, error) {
+	var buf, stderr bytes.Buffer
+	cmd := exec.Command("git", "worktree", "list", "--porcelain")
+	cmd.Dir = r.Dir
+	cmd.Stdout = &buf
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("git worktree list failed: %w (%s)", err, strings.TrimSpace(stderr.String()))
+	}
+	return parseWorktreeListFull(buf.String()), nil
+}

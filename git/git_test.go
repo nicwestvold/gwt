@@ -1033,6 +1033,60 @@ func TestRenderWorktreeList(t *testing.T) {
 	}
 }
 
+func TestParseWorktreeListFull(t *testing.T) {
+	porcelain := "worktree /repo/main\n" +
+		"HEAD 27233475638abcdef0123456789abcdef01234567\n" +
+		"branch refs/heads/main\n" +
+		"\n" +
+		"worktree /repo/wt-detached\n" +
+		"HEAD 00666edca69abcdef0123456789abcdef01234567\n" +
+		"detached\n" +
+		"\n" +
+		"worktree /repo/bare\n" +
+		"bare\n" +
+		"\n" +
+		"worktree /repo/locked-wt\n" +
+		"HEAD 689fff37a9cabcdef0123456789abcdef01234567\n" +
+		"branch refs/heads/feature\n" +
+		"locked reason here\n" +
+		"prunable gitdir gone\n"
+
+	got := parseWorktreeListFull(porcelain)
+	if len(got) != 4 {
+		t.Fatalf("got %d entries, want 4", len(got))
+	}
+	if got[0].Branch != "main" || got[0].SHA != "27233475638" {
+		t.Errorf("entry0 = %+v", got[0])
+	}
+	if !got[1].Detached || got[1].Branch != "" {
+		t.Errorf("entry1 not detached: %+v", got[1])
+	}
+	if !got[2].Bare {
+		t.Errorf("entry2 not bare: %+v", got[2])
+	}
+	if !got[3].Locked || !got[3].Prunable || got[3].Branch != "feature" {
+		t.Errorf("entry3 flags wrong: %+v", got[3])
+	}
+}
+
+func TestWorktreeInfoAnnotation(t *testing.T) {
+	cases := []struct {
+		in   WorktreeInfo
+		want string
+	}{
+		{WorktreeInfo{Branch: "main"}, "[main]"},
+		{WorktreeInfo{Detached: true}, "(detached HEAD)"},
+		{WorktreeInfo{Bare: true}, "(bare)"},
+		{WorktreeInfo{Branch: "x", Locked: true}, "[x] locked"},
+		{WorktreeInfo{Branch: "x", Locked: true, Prunable: true}, "[x] locked prunable"},
+	}
+	for _, c := range cases {
+		if got := c.in.Annotation(); got != c.want {
+			t.Errorf("Annotation(%+v) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 // exitState creates an *os.ProcessState with the given exit code by running a
 // subprocess that exits with that code.
 func exitState(t *testing.T, code int) *os.ProcessState {
