@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"sync"
 
 	"github.com/nicwestvold/gwt/config"
 	"github.com/nicwestvold/gwt/detect"
@@ -452,10 +453,12 @@ Supports all git worktree remove flags (e.g., --force).`,
 						return err
 					}
 					cd, rmErr := runWorkspaceRemove(cfg, wsName, ws, group, keepBranch, force)
+					if cd != "" {
+						git.WriteCdFile(cd)
+					}
 					if rmErr != nil {
 						return rmErr
 					}
-					git.WriteCdFile(cd)
 					return nil
 				}
 			}
@@ -833,36 +836,102 @@ func validateGroup(root, arg, group string) (string, error) {
 	return filepath.Clean(group), nil
 }
 
-// runWorkspaceRemove removes every member worktree in the branch group dir,
-// then cleans the empty group dir. Returns the primary's real repo path to
-// cd back into.
+// runWorkspaceRemove removes every member worktree in the branch group dir
+// concurrently, then cleans the empty group dir if every member succeeded.
+// Removal is best-effort: every present member is attempted even if others
+// fail, and results are aggregated into a summary printed to stdout. Returns
+// the primary's real repo path to cd back into, and a non-nil error when any
+// member failed (for a non-zero exit).
 func runWorkspaceRemove(cfg *config.Config, wsName string, ws config.WorkspaceEntry, group string, keepBranch, force bool) (string, error) {
 	members, err := cfg.ResolveMembers(ws)
 	if err != nil {
 		return "", err
 	}
 
-	for _, m := range members {
+	type memberResult struct {
+		name    string
+		present bool
+		mr      git.MemberRemoval
+	}
+	results := make([]memberResult, len(members))
+
+	var wg sync.WaitGroup
+	for i, m := range members {
 		worktreePath := filepath.Join(group, m.Short)
 		if _, statErr := os.Stat(worktreePath); statErr != nil {
-			continue // member worktree absent; skip
+			results[i] = memberResult{name: m.Short, present: false}
+			continue
 		}
-		if err := git.RemoveMemberWorktree(m.Path, worktreePath, keepBranch, force); err != nil {
-			return "", err
+		wg.Add(1)
+		go func(i int, repoDir, worktreePath, name string) {
+			defer wg.Done()
+			results[i] = memberResult{
+				name:    name,
+				present: true,
+				mr:      git.RemoveMemberWorktree(repoDir, worktreePath, keepBranch, force),
+			}
+		}(i, m.Path, worktreePath, m.Short)
+	}
+	wg.Wait()
+
+	// Aggregate.
+	var totalBytes int64
+	anyApprox := false
+	removed, attempted := 0, 0
+	var failures []string                 // "repo: reason"
+	keptBranches := map[string][]string{} // branch -> repos
+	for _, res := range results {
+		if !res.present {
+			continue
+		}
+		attempted++
+		if res.mr.Err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", res.name, res.mr.Err))
+			continue
+		}
+		removed++
+		totalBytes += res.mr.Freed.Bytes
+		if res.mr.Freed.Skipped > 0 {
+			anyApprox = true
+		}
+		if res.mr.BranchKept != "" {
+			keptBranches[res.mr.BranchKept] = append(keptBranches[res.mr.BranchKept], res.name)
 		}
 	}
 
-	root, err := ws.ResolveWorktreeRoot(wsName)
-	if err == nil {
+	// Clean the empty group dir (best-effort, only if everything removed).
+	root, rootErr := ws.ResolveWorktreeRoot(wsName)
+	if rootErr == nil && len(failures) == 0 {
 		_ = os.Remove(group)
 		git.CleanEmptyParents(group, root)
 	}
 
+	// Report.
+	groupName := filepath.Base(group)
+	sizeStr := disk.FormatApprox(totalBytes, anyApprox)
+	if len(failures) == 0 {
+		fmt.Printf("removed workspace group %s (%d repos) — freed %s\n", groupName, removed, sizeStr)
+	} else {
+		fmt.Printf("removed %d/%d repos — freed %s\n", removed, attempted, sizeStr)
+		for _, f := range failures {
+			fmt.Printf("  ! %s\n", f)
+		}
+	}
+	for branch, repos := range keptBranches {
+		fmt.Printf("note: branch %q kept (not fully merged) in: %s\n", branch, strings.Join(repos, ", "))
+		fmt.Printf("      delete with: git -C <repo> branch -D %s\n", branch)
+	}
+
+	// Primary path to cd back into.
 	primaryPath := members[0].Path
 	for _, m := range members {
 		if m.IsPrimary {
 			primaryPath = m.Path
 		}
+	}
+
+	if len(failures) > 0 {
+		return primaryPath, fmt.Errorf("%d of %d worktrees could not be removed", len(failures), attempted)
 	}
 	return primaryPath, nil
 }

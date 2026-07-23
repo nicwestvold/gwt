@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/nicwestvold/gwt/disk"
 )
 
 // initRepoWithMain creates a git repo at dir with one commit on "main".
@@ -74,8 +76,8 @@ func TestRemoveMemberWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := RemoveMemberWorktree(repo, wt, false, false); err != nil {
-		t.Fatalf("RemoveMemberWorktree error: %v", err)
+	if mr := RemoveMemberWorktree(repo, wt, false, false); mr.Err != nil {
+		t.Fatalf("RemoveMemberWorktree error: %v", mr.Err)
 	}
 	if _, err := os.Stat(wt); !os.IsNotExist(err) {
 		t.Error("worktree dir still present")
@@ -94,8 +96,8 @@ func TestRemoveMemberWorktreeKeepBranch(t *testing.T) {
 	if err := AddWorktreeAt(repo, []string{"-b", "feat/x", wt, "main"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := RemoveMemberWorktree(repo, wt, true, false); err != nil {
-		t.Fatal(err)
+	if mr := RemoveMemberWorktree(repo, wt, true, false); mr.Err != nil {
+		t.Fatal(mr.Err)
 	}
 	if !BranchExists(repo, "feat/x") {
 		t.Error("branch feat/x deleted, want kept")
@@ -112,5 +114,19 @@ func TestRunSetup(t *testing.T) {
 	}
 	if err := RunSetup("exit 3", dir); err == nil {
 		t.Error("RunSetup should return error on non-zero exit")
+	}
+}
+
+func TestMemberRemovalShape(t *testing.T) {
+	mr := MemberRemoval{
+		Freed:      disk.Result{Bytes: 2202009600}, // ~2.05 GiB
+		BranchKept: "feature-x",
+		Err:        nil,
+	}
+	if mr.BranchKept != "feature-x" || mr.Err != nil {
+		t.Fatal("fields")
+	}
+	if mr.Freed.Bytes == 0 {
+		t.Fatal("freed")
 	}
 }
