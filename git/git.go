@@ -613,12 +613,12 @@ func renderSizedWorktreeList(infos []WorktreeInfo, sizes []disk.Result, activePa
 
 	var b strings.Builder
 	for i, in := range infos {
-		content := fmt.Sprintf("%-*s  %-*s  %*s  %s",
-			pathW, in.Path, shaW, in.SHA, sizeW, sizeStrs[i], in.Annotation())
+		content := fmt.Sprintf("%-*s  %*s  %-*s  %s",
+			pathW, in.Path, sizeW, sizeStrs[i], shaW, in.SHA, in.Annotation())
 		active := activePath != "" && in.Path == activePath
 		b.WriteString(decorateLine(strings.TrimRight(content, " "), active, color) + "\n")
 	}
-	totalContent := fmt.Sprintf("%-*s  %-*s  %*s", pathW, "total", shaW, "", sizeW, totalStr)
+	totalContent := fmt.Sprintf("%-*s  %*s", pathW, "total", sizeW, totalStr)
 	b.WriteString(decorateLine(strings.TrimRight(totalContent, " "), false, color) + "\n")
 	return b.String()
 }

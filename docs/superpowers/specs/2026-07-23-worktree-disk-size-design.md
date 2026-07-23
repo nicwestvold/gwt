@@ -146,14 +146,14 @@ interception to also recognize `gwt ls -s`, `gwt list -s`, `--size`.
 The `-s` variant is **self-rendered from structured data**, because inserting an
 aligned column into git's pre-formatted text is fragile.
 
-- Columns: `path | HEAD-sha | size | [branch]` — size is a new **3rd column,
-  right before the branch**, right-aligned. Append a `total` row aligned under
-  the size column.
+- Columns: `path | size | HEAD-sha | [branch]` — size sits **before the sha**
+  (3rd-to-last column), right-aligned. Append a `total` row aligned under the
+  size column.
 
   ```
-    /repo/.../build-migrate-to-pnpm/grafana   00666edca69   1.2 GiB   [build/migrate-to-pnpm]
-  * /repo/.../governance-.../grafana          3249c5ff7a0   4.8 GiB   [governance/...]
-    total                                                    6.9 GiB
+    /repo/.../build-migrate-to-pnpm/grafana   1.2 GiB   00666edca69   [build/migrate-to-pnpm]
+  * /repo/.../governance-.../grafana          4.8 GiB   3249c5ff7a0   [governance/...]
+    total                                     6.9 GiB
   ```
 
 - Size for each worktree computed via `disk.Size`, run **concurrently** across
