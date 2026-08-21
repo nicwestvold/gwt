@@ -1098,7 +1098,20 @@ func TestInspectWorktrees(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	states := repo.inspectWorktrees(infos, "main")
+	fastStates := repo.inspectWorktrees(infos, "main", false)
+	if len(fastStates) != 2 {
+		t.Fatalf("inspectWorktrees() returned %d fast states, want 2", len(fastStates))
+	}
+	for i, info := range infos {
+		if fastStates[i].StatusKnown {
+			t.Errorf("%s fast state unexpectedly inspected status: %+v", info.Branch, fastStates[i])
+		}
+		if !fastStates[i].DivergenceKnown {
+			t.Errorf("%s fast state has unknown divergence: %+v", info.Branch, fastStates[i])
+		}
+	}
+
+	states := repo.inspectWorktrees(infos, "main", true)
 	if len(states) != 2 {
 		t.Fatalf("inspectWorktrees() returned %d states, want 2", len(states))
 	}
@@ -1179,7 +1192,7 @@ func TestRenderDetailedWorktreeTable(t *testing.T) {
 		{StatusKnown: true, ChangeCount: 10, DivergenceKnown: true, Ahead: 27, Behind: 2},
 		{StatusKnown: true, ChangeCount: 1, DivergenceKnown: true, Ahead: 3},
 	}
-	out := renderDetailedWorktreeTable(infos, states, nil, "/repo/feature", "", "main", false)
+	out := renderDetailedWorktreeTable(infos, states, nil, true, "/repo/feature", "", "main", false)
 
 	for _, want := range []string{
 		"Branch", "Changes", "vs main", "Commit", "Path",
@@ -1194,13 +1207,25 @@ func TestRenderDetailedWorktreeTable(t *testing.T) {
 		t.Errorf("color disabled but output contains ANSI escapes:\n%q", out)
 	}
 
-	colored := renderDetailedWorktreeTable(infos, states, nil, "/repo/feature", "", "main", true)
+	colored := renderDetailedWorktreeTable(infos, states, nil, true, "/repo/feature", "", "main", true)
 	for _, want := range []string{"\033[32m+27", "\033[31m-2", "\033[33mΔ10"} {
 		if !strings.Contains(colored, want) {
 			t.Errorf("expected semantic color %q:\n%q", want, colored)
 		}
 	}
-	if got := renderDetailedWorktreeTable(nil, nil, nil, "", "", "main", false); got != "" {
+	fast := renderDetailedWorktreeTable(infos, states, nil, false, "/repo/feature", "", "main", false)
+	for _, unwanted := range []string{"Changes", "Δ10", "with changes", "all clean", "unknown"} {
+		if strings.Contains(fast, unwanted) {
+			t.Errorf("fast table contains status text %q:\n%s", unwanted, fast)
+		}
+	}
+	for _, want := range []string{"Branch", "vs main", "origin +1", "+27 -2", "Commit", "Path", "3 worktrees"} {
+		if !strings.Contains(fast, want) {
+			t.Errorf("fast table missing %q:\n%s", want, fast)
+		}
+	}
+
+	if got := renderDetailedWorktreeTable(nil, nil, nil, false, "", "", "main", false); got != "" {
 		t.Errorf("empty table = %q, want empty", got)
 	}
 }
@@ -1237,7 +1262,7 @@ func TestRenderDetailedWorktreeTableSized(t *testing.T) {
 		{StatusKnown: true, DivergenceKnown: true},
 	}
 	sizes := []disk.Result{{Bytes: 1024}, {Bytes: 2048, Skipped: 1}}
-	out := renderDetailedWorktreeTable(infos, states, sizes, "/repo/main", "", "main", false)
+	out := renderDetailedWorktreeTable(infos, states, sizes, true, "/repo/main", "", "main", false)
 	for _, want := range []string{"Size", "1.0 KiB", "~2.0 KiB", "2 worktrees · all clean · total ~3.0 KiB"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
@@ -1258,6 +1283,14 @@ func TestRenderDetailedWorktreeTableSized(t *testing.T) {
 	}
 	if rightEdges[0] != rightEdges[1] || rightEdges[1] != rightEdges[2] {
 		t.Errorf("Size column is not right-aligned (right edges %v):\n%s", rightEdges, out)
+	}
+
+	fast := renderDetailedWorktreeTable(infos, states, sizes, false, "/repo/main", "", "main", false)
+	if strings.Contains(fast, "Changes") || strings.Contains(fast, "all clean") {
+		t.Errorf("sized fast table contains status details:\n%s", fast)
+	}
+	if !strings.Contains(fast, "2 worktrees · total ~3.0 KiB") {
+		t.Errorf("sized fast table missing total:\n%s", fast)
 	}
 }
 

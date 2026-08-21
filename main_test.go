@@ -450,25 +450,29 @@ func TestMergeDetected(t *testing.T) {
 	})
 }
 
-func TestIsSizeFlag(t *testing.T) {
+func TestParseListOptions(t *testing.T) {
 	cases := []struct {
 		name string
 		args []string
-		want bool
+		want listOptions
+		ok   bool
 	}{
-		{"short", []string{"-s"}, true},
-		{"long", []string{"--size"}, true},
-		{"none", nil, false},
-		{"empty", []string{}, false},
-		{"other flag", []string{"--porcelain"}, false},
-		{"size plus other", []string{"-s", "--porcelain"}, false},
-		{"two size flags", []string{"-s", "--size"}, false},
-		{"positional", []string{"main"}, false},
+		{name: "none", args: nil, want: listOptions{}, ok: true},
+		{name: "short size", args: []string{"-s"}, want: listOptions{size: true}, ok: true},
+		{name: "long size", args: []string{"--size"}, want: listOptions{size: true}, ok: true},
+		{name: "status", args: []string{"--status"}, want: listOptions{status: true}, ok: true},
+		{name: "size and status", args: []string{"--size", "--status"}, want: listOptions{size: true, status: true}, ok: true},
+		{name: "status and short size", args: []string{"--status", "-s"}, want: listOptions{size: true, status: true}, ok: true},
+		{name: "duplicate enrichment", args: []string{"-s", "--size", "--status", "--status"}, want: listOptions{size: true, status: true}, ok: true},
+		{name: "other flag", args: []string{"--porcelain"}, ok: false},
+		{name: "enrichment plus other", args: []string{"--status", "--porcelain"}, ok: false},
+		{name: "positional", args: []string{"main"}, ok: false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := isSizeFlag(c.args); got != c.want {
-				t.Errorf("isSizeFlag(%v) = %v, want %v", c.args, got, c.want)
+			got, ok := parseListOptions(c.args)
+			if ok != c.ok || got != c.want {
+				t.Errorf("parseListOptions(%v) = (%+v, %t), want (%+v, %t)", c.args, got, ok, c.want, c.ok)
 			}
 		})
 	}

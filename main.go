@@ -68,7 +68,7 @@ Additional commands:
 
 Enhanced commands:
   add        Create a worktree (setup handled by post-checkout hook)
-  list/ls    List branches, changes, and divergence from the main branch
+  list/ls    List branches and divergence; --status adds working-tree changes
   remove/rm  Remove a worktree by path or branch name (auto-cd back)
   use        Switch to an existing worktree`,
 }
@@ -972,9 +972,26 @@ func ensureRegistered(repo *git.Repo, name string) error {
 	return nil
 }
 
-// isSizeFlag reports whether args is exactly the size flag for `gwt ls`.
-func isSizeFlag(args []string) bool {
-	return len(args) == 1 && (args[0] == "-s" || args[0] == "--size")
+type listOptions struct {
+	size   bool
+	status bool
+}
+
+// parseListOptions recognizes the gwt-specific list enrichments. Unknown
+// arguments are left for git worktree list to handle through passthrough.
+func parseListOptions(args []string) (listOptions, bool) {
+	var opts listOptions
+	for _, arg := range args {
+		switch arg {
+		case "-s", "--size":
+			opts.size = true
+		case "--status":
+			opts.status = true
+		default:
+			return listOptions{}, false
+		}
+	}
+	return opts, true
 }
 
 // listMainBranch returns the configured comparison branch for the repository,
@@ -1048,21 +1065,25 @@ func main() {
 					fmt.Fprintf(os.Stderr, "error: %v\n", err)
 					os.Exit(1)
 				}
-				// Enhance the bare `gwt list` (and its `ls` alias) with local
-				// changes, main-branch divergence, and an active-worktree marker.
-				// `-s`/`--size` adds an on-disk size column.
+				// Enhance `gwt list` (and its `ls` alias) with main-branch
+				// divergence and an active-worktree marker. `--status` opts into
+				// local change scans; `-s`/`--size` adds on-disk sizes.
 				// Any other flags fall through to plain git untouched.
 				if subcmd == "list" {
-					mainBranch := listMainBranch(repo)
-					if len(os.Args) == 2 {
-						if err := repo.PrintWorktreeList(mainBranch); err != nil {
-							fmt.Fprintf(os.Stderr, "error: %v\n", err)
-							os.Exit(git.ExitCode(err))
+					if opts, ok := parseListOptions(os.Args[2:]); ok {
+						mainBranch := listMainBranch(repo)
+						var err error
+						switch {
+						case opts.size && opts.status:
+							err = repo.PrintSizedWorktreeListWithStatus(mainBranch)
+						case opts.size:
+							err = repo.PrintSizedWorktreeList(mainBranch)
+						case opts.status:
+							err = repo.PrintWorktreeListWithStatus(mainBranch)
+						default:
+							err = repo.PrintWorktreeList(mainBranch)
 						}
-						return
-					}
-					if isSizeFlag(os.Args[2:]) {
-						if err := repo.PrintSizedWorktreeList(mainBranch); err != nil {
+						if err != nil {
 							fmt.Fprintf(os.Stderr, "error: %v\n", err)
 							os.Exit(git.ExitCode(err))
 						}

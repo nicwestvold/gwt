@@ -595,9 +595,9 @@ func (r *Repo) mainUpstream(mainBranch string) (ref, label string) {
 	return ref, label
 }
 
-// inspectWorktrees collects status and branch divergence concurrently.
-// It uses only local Git data and never fetches a remote.
-func (r *Repo) inspectWorktrees(infos []WorktreeInfo, mainBranch string) []WorktreeState {
+// inspectWorktrees collects branch divergence and, when requested, status
+// concurrently. It uses only local Git data and never fetches a remote.
+func (r *Repo) inspectWorktrees(infos []WorktreeInfo, mainBranch string, withStatus bool) []WorktreeState {
 	states := make([]WorktreeState, len(infos))
 	mainUpstreamRef, mainUpstreamLabel := r.mainUpstream(mainBranch)
 	var wg sync.WaitGroup
@@ -609,13 +609,15 @@ func (r *Repo) inspectWorktrees(infos []WorktreeInfo, mainBranch string) []Workt
 		go func(i int, info WorktreeInfo) {
 			defer wg.Done()
 
-			var status bytes.Buffer
-			cmd := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=normal")
-			cmd.Dir = info.Path
-			cmd.Stdout = &status
-			if cmd.Run() == nil {
-				states[i].StatusKnown = true
-				states[i].ChangeCount = countStatusChanges(status.String())
+			if withStatus {
+				var status bytes.Buffer
+				cmd := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=normal")
+				cmd.Dir = info.Path
+				cmd.Stdout = &status
+				if cmd.Run() == nil {
+					states[i].StatusKnown = true
+					states[i].ChangeCount = countStatusChanges(status.String())
+				}
 			}
 
 			if info.Branch == "" {
@@ -631,7 +633,7 @@ func (r *Repo) inspectWorktrees(infos []WorktreeInfo, mainBranch string) []Workt
 			}
 			var divergence bytes.Buffer
 			rangeSpec := baseRef + "...refs/heads/" + info.Branch
-			cmd = exec.Command("git", "rev-list", "--left-right", "--count", rangeSpec)
+			cmd := exec.Command("git", "rev-list", "--left-right", "--count", rangeSpec)
 			cmd.Dir = r.Dir
 			cmd.Stdout = &divergence
 			if cmd.Run() != nil {
@@ -732,9 +734,9 @@ func homeRelativePath(path, home string) string {
 
 // renderDetailedWorktreeTable renders a branch-first table. The path is last
 // so long centralized-worktree paths cannot push status and divergence off
-// screen. When sizes is non-nil, it adds a Size column and includes the total
-// in the summary line.
-func renderDetailedWorktreeTable(infos []WorktreeInfo, states []WorktreeState, sizes []disk.Result, activePath, selectedPath, mainBranch string, color bool) string {
+// screen. The Changes column is included only when withStatus is true. When
+// sizes is non-nil, it adds a Size column and includes the total in the summary.
+func renderDetailedWorktreeTable(infos []WorktreeInfo, states []WorktreeState, sizes []disk.Result, withStatus bool, activePath, selectedPath, mainBranch string, color bool) string {
 	if len(infos) == 0 {
 		return ""
 	}
@@ -760,13 +762,17 @@ func renderDetailedWorktreeTable(infos []WorktreeInfo, states []WorktreeState, s
 			state = states[i]
 		}
 		branches[i] = worktreeBranchLabel(info)
-		changes[i] = changesLabel(info, state)
+		if withStatus {
+			changes[i] = changesLabel(info, state)
+		}
 		divergences[i] = divergenceLabel(info, state, mainBranch)
 		branchW = max(branchW, utf8.RuneCountInString(branches[i]))
-		changesW = max(changesW, utf8.RuneCountInString(changes[i]))
+		if withStatus {
+			changesW = max(changesW, utf8.RuneCountInString(changes[i]))
+		}
 		divergenceW = max(divergenceW, utf8.RuneCountInString(divergences[i]))
 		commitW = max(commitW, utf8.RuneCountInString(info.SHA))
-		if !info.Bare {
+		if withStatus && !info.Bare {
 			if !state.StatusKnown {
 				unknown++
 			} else {
@@ -801,7 +807,11 @@ func renderDetailedWorktreeTable(infos []WorktreeInfo, states []WorktreeState, s
 	home, _ := os.UserHomeDir()
 
 	var b strings.Builder
-	header := "  " + padRight("Branch", branchW) + "  " + padRight("Changes", changesW) + "  " + padRight(divergenceHeader, divergenceW) + "  "
+	header := "  " + padRight("Branch", branchW) + "  "
+	if withStatus {
+		header += padRight("Changes", changesW) + "  "
+	}
+	header += padRight(divergenceHeader, divergenceW) + "  "
 	if withSize {
 		header += padLeft("Size", sizeW) + "  "
 	}
@@ -829,16 +839,18 @@ func renderDetailedWorktreeTable(infos []WorktreeInfo, states []WorktreeState, s
 		}
 		b.WriteString(branchCell + "  ")
 
-		changesCell := padRight(changes[i], changesW)
-		switch {
-		case !state.StatusKnown && !info.Bare:
-			changesCell = style(yellow, changesCell)
-		case state.ChangeCount > 0:
-			changesCell = style(yellow, changesCell)
-		case state.StatusKnown:
-			changesCell = style(dim, changesCell)
+		if withStatus {
+			changesCell := padRight(changes[i], changesW)
+			switch {
+			case !state.StatusKnown && !info.Bare:
+				changesCell = style(yellow, changesCell)
+			case state.ChangeCount > 0:
+				changesCell = style(yellow, changesCell)
+			case state.StatusKnown:
+				changesCell = style(dim, changesCell)
+			}
+			b.WriteString(changesCell + "  ")
 		}
-		b.WriteString(changesCell + "  ")
 
 		divergenceCell := divergences[i]
 		basePrefix := ""
@@ -875,13 +887,15 @@ func renderDetailedWorktreeTable(infos []WorktreeInfo, states []WorktreeState, s
 	if len(infos) != 1 {
 		summary += "s"
 	}
-	if dirty > 0 {
-		summary += fmt.Sprintf(" · %d with changes", dirty)
-	} else if inspected > 0 && unknown == 0 {
-		summary += " · all clean"
-	}
-	if unknown > 0 {
-		summary += fmt.Sprintf(" · %d unknown", unknown)
+	if withStatus {
+		if dirty > 0 {
+			summary += fmt.Sprintf(" · %d with changes", dirty)
+		} else if inspected > 0 && unknown == 0 {
+			summary += " · all clean"
+		}
+		if unknown > 0 {
+			summary += fmt.Sprintf(" · %d unknown", unknown)
+		}
 	}
 	if withSize {
 		summary += " · total " + disk.FormatApprox(totalBytes, anyApprox)
@@ -895,22 +909,29 @@ func renderDetailedWorktreeTable(infos []WorktreeInfo, states []WorktreeState, s
 type WorktreeList struct {
 	infos      []WorktreeInfo
 	states     []WorktreeState
+	withStatus bool
 	activePath string
 	mainBranch string
 }
 
-// LoadWorktreeList collects worktree rows, local status, and divergence once.
-func (r *Repo) LoadWorktreeList(mainBranch string) (*WorktreeList, error) {
+func (r *Repo) loadWorktreeList(mainBranch string, withStatus bool) (*WorktreeList, error) {
 	infos, err := r.ListWorktreesFull()
 	if err != nil {
 		return nil, err
 	}
 	return &WorktreeList{
 		infos:      infos,
-		states:     r.inspectWorktrees(infos, mainBranch),
+		states:     r.inspectWorktrees(infos, mainBranch, withStatus),
+		withStatus: withStatus,
 		activePath: currentWorktreeTop(),
 		mainBranch: mainBranch,
 	}, nil
+}
+
+// LoadWorktreeList collects worktree rows and divergence without performing
+// the more expensive working-tree status scan.
+func (r *Repo) LoadWorktreeList(mainBranch string) (*WorktreeList, error) {
+	return r.loadWorktreeList(mainBranch, false)
 }
 
 // Choices returns the branch-backed worktrees that can be selected by use.
@@ -933,15 +954,11 @@ func (l *WorktreeList) ActivePath() string {
 // the active worktree. Selection keeps the active branch green so both states
 // remain visible as the cursor moves.
 func (l *WorktreeList) Render(selectedPath string, color bool) string {
-	return renderDetailedWorktreeTable(l.infos, l.states, nil, l.activePath, selectedPath, l.mainBranch, color)
+	return renderDetailedWorktreeTable(l.infos, l.states, nil, l.withStatus, l.activePath, selectedPath, l.mainBranch, color)
 }
 
-// PrintWorktreeList prints a branch-first table with local change counts and
-// divergence. Feature branches compare with mainBranch; mainBranch compares
-// with its configured upstream. The caller's current worktree is marked, and
-// semantic color is enabled only on a terminal when NO_COLOR is unset.
-func (r *Repo) PrintWorktreeList(mainBranch string) error {
-	list, err := r.LoadWorktreeList(mainBranch)
+func (r *Repo) printWorktreeList(mainBranch string, withStatus bool) error {
+	list, err := r.loadWorktreeList(mainBranch, withStatus)
 	if err != nil {
 		return err
 	}
@@ -949,14 +966,25 @@ func (r *Repo) PrintWorktreeList(mainBranch string) error {
 	return nil
 }
 
-// PrintSizedWorktreeList prints the worktree list with an on-disk size column.
-// Sizes are computed concurrently across worktrees.
-func (r *Repo) PrintSizedWorktreeList(mainBranch string) error {
+// PrintWorktreeList prints a branch-first table with divergence. Feature
+// branches compare with mainBranch; mainBranch compares with its configured
+// upstream. The caller's current worktree is marked, and semantic color is
+// enabled only on a terminal when NO_COLOR is unset.
+func (r *Repo) PrintWorktreeList(mainBranch string) error {
+	return r.printWorktreeList(mainBranch, false)
+}
+
+// PrintWorktreeListWithStatus prints the worktree list with local change counts.
+func (r *Repo) PrintWorktreeListWithStatus(mainBranch string) error {
+	return r.printWorktreeList(mainBranch, true)
+}
+
+func (r *Repo) printSizedWorktreeList(mainBranch string, withStatus bool) error {
 	infos, err := r.ListWorktreesFull()
 	if err != nil {
 		return err
 	}
-	states := r.inspectWorktrees(infos, mainBranch)
+	states := r.inspectWorktrees(infos, mainBranch, withStatus)
 	sizes := make([]disk.Result, len(infos))
 	var wg sync.WaitGroup
 	for i := range infos {
@@ -968,8 +996,19 @@ func (r *Repo) PrintSizedWorktreeList(mainBranch string) error {
 		}(i)
 	}
 	wg.Wait()
-	fmt.Print(renderDetailedWorktreeTable(infos, states, sizes, currentWorktreeTop(), "", mainBranch, shouldColor()))
+	fmt.Print(renderDetailedWorktreeTable(infos, states, sizes, withStatus, currentWorktreeTop(), "", mainBranch, shouldColor()))
 	return nil
+}
+
+// PrintSizedWorktreeList prints the worktree list with an on-disk size column.
+// Sizes are computed concurrently across worktrees.
+func (r *Repo) PrintSizedWorktreeList(mainBranch string) error {
+	return r.printSizedWorktreeList(mainBranch, false)
+}
+
+// PrintSizedWorktreeListWithStatus prints on-disk sizes and local change counts.
+func (r *Repo) PrintSizedWorktreeListWithStatus(mainBranch string) error {
+	return r.printSizedWorktreeList(mainBranch, true)
 }
 
 // currentWorktreeTop returns the top-level path of the worktree containing the
