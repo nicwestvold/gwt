@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/nicwestvold/gwt/disk"
 )
@@ -545,106 +546,349 @@ func parseWorktreeList(output string) []WorktreeEntry {
 	return entries
 }
 
-// decorateLine prepends the active/inactive marker and, on a color terminal,
-// wraps the active line in green. Shared by the plain and sized list renders.
-func decorateLine(content string, active, color bool) string {
-	const green = "\033[32m"
-	const reset = "\033[0m"
+// WorktreeState contains the per-worktree information that is more expensive
+// than `git worktree list`: working-tree changes and branch divergence. Known
+// is tracked separately so a failed best-effort inspection is distinguishable
+// from a clean/current result.
+type WorktreeState struct {
+	StatusKnown     bool
+	ChangeCount     int
+	DivergenceKnown bool
+	DivergenceBase  string
+	Ahead           int
+	Behind          int
+}
+
+func countStatusChanges(output string) int {
+	output = strings.TrimSuffix(output, "\n")
+	if output == "" {
+		return 0
+	}
+	return strings.Count(output, "\n") + 1
+}
+
+func parseDivergence(output string) (ahead, behind int, ok bool) {
+	// rev-list receives main on the left and the worktree branch on the
+	// right, so its output is <behind> <ahead> from the branch's perspective.
+	if _, err := fmt.Fscan(strings.NewReader(output), &behind, &ahead); err != nil {
+		return 0, 0, false
+	}
+	return ahead, behind, true
+}
+
+func (r *Repo) mainUpstream(mainBranch string) (ref, label string) {
+	var buf bytes.Buffer
+	cmd := exec.Command("git", "for-each-ref", "--format=%(upstream)", "refs/heads/"+mainBranch)
+	cmd.Dir = r.Dir
+	cmd.Stdout = &buf
+	if cmd.Run() != nil {
+		return "", ""
+	}
+	ref = strings.TrimSpace(buf.String())
+	if ref == "" {
+		return "", ""
+	}
+	label = strings.TrimPrefix(ref, "refs/remotes/")
+	if suffix := "/" + mainBranch; strings.HasSuffix(label, suffix) {
+		label = strings.TrimSuffix(label, suffix)
+	}
+	return ref, label
+}
+
+// inspectWorktrees collects status and branch divergence concurrently.
+// It uses only local Git data and never fetches a remote.
+func (r *Repo) inspectWorktrees(infos []WorktreeInfo, mainBranch string) []WorktreeState {
+	states := make([]WorktreeState, len(infos))
+	mainUpstreamRef, mainUpstreamLabel := r.mainUpstream(mainBranch)
+	var wg sync.WaitGroup
+	for i, info := range infos {
+		if info.Bare {
+			continue
+		}
+		wg.Add(1)
+		go func(i int, info WorktreeInfo) {
+			defer wg.Done()
+
+			var status bytes.Buffer
+			cmd := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=normal")
+			cmd.Dir = info.Path
+			cmd.Stdout = &status
+			if cmd.Run() == nil {
+				states[i].StatusKnown = true
+				states[i].ChangeCount = countStatusChanges(status.String())
+			}
+
+			if info.Branch == "" {
+				return
+			}
+			baseRef := "refs/heads/" + mainBranch
+			if info.Branch == mainBranch {
+				if mainUpstreamRef == "" {
+					return
+				}
+				baseRef = mainUpstreamRef
+				states[i].DivergenceBase = mainUpstreamLabel
+			}
+			var divergence bytes.Buffer
+			rangeSpec := baseRef + "...refs/heads/" + info.Branch
+			cmd = exec.Command("git", "rev-list", "--left-right", "--count", rangeSpec)
+			cmd.Dir = r.Dir
+			cmd.Stdout = &divergence
+			if cmd.Run() != nil {
+				return
+			}
+			states[i].Ahead, states[i].Behind, states[i].DivergenceKnown = parseDivergence(divergence.String())
+		}(i, info)
+	}
+	wg.Wait()
+	return states
+}
+
+func worktreeBranchLabel(info WorktreeInfo) string {
+	var label string
 	switch {
-	case active && color:
-		return green + "* " + content + reset
-	case active:
-		return "* " + content
+	case info.Bare:
+		label = "(bare)"
+	case info.Detached:
+		label = "(detached HEAD)"
+	case info.Branch == "":
+		label = "(unknown)"
 	default:
-		return "  " + content
+		label = info.Branch
+	}
+	var notes []string
+	if info.Locked {
+		notes = append(notes, "locked")
+	}
+	if info.Prunable {
+		notes = append(notes, "prunable")
+	}
+	if len(notes) > 0 {
+		label += " (" + strings.Join(notes, ", ") + ")"
+	}
+	return label
+}
+
+func changesLabel(info WorktreeInfo, state WorktreeState) string {
+	if info.Bare {
+		return "—"
+	}
+	if !state.StatusKnown {
+		return "?"
+	}
+	switch state.ChangeCount {
+	case 0:
+		return "—"
+	default:
+		return fmt.Sprintf("Δ%d", state.ChangeCount)
 	}
 }
 
-// renderWorktreeTable renders the worktree list as an aligned table with the
-// active worktree marked. Columns are path | [size] | sha | annotation. When
-// sizes is nil the size column and total row are omitted (bare `ls`);
-// otherwise sizes[i] corresponds to infos[i] and a size column plus a total
-// row are included (`ls -s`).
-func renderWorktreeTable(infos []WorktreeInfo, sizes []disk.Result, activePath string, color bool) string {
-	withSize := sizes != nil
-
-	pathW := 0
-	if withSize {
-		pathW = len("total")
+func divergenceLabel(info WorktreeInfo, state WorktreeState, mainBranch string) string {
+	if info.Branch == "" || (info.Branch == mainBranch && state.DivergenceBase == "") {
+		return "—"
 	}
-	shaW := 0
-	sizeW := 0
+	prefix := ""
+	if info.Branch == mainBranch {
+		prefix = state.DivergenceBase + " "
+	}
+	if !state.DivergenceKnown {
+		return prefix + "?"
+	}
+	if state.Ahead == 0 && state.Behind == 0 {
+		return prefix + "="
+	}
+	var parts []string
+	if state.Ahead > 0 {
+		parts = append(parts, fmt.Sprintf("+%d", state.Ahead))
+	}
+	if state.Behind > 0 {
+		parts = append(parts, fmt.Sprintf("-%d", state.Behind))
+	}
+	return prefix + strings.Join(parts, " ")
+}
+
+func padRight(s string, width int) string {
+	return s + strings.Repeat(" ", max(0, width-utf8.RuneCountInString(s)))
+}
+
+// renderDetailedWorktreeTable renders a branch-first table. The path is last
+// so long centralized-worktree paths cannot push status and divergence off
+// screen. When sizes is non-nil, it adds a Size column and includes the total
+// in the summary line.
+func renderDetailedWorktreeTable(infos []WorktreeInfo, states []WorktreeState, sizes []disk.Result, activePath, mainBranch string, color bool) string {
+	if len(infos) == 0 {
+		return ""
+	}
+	withSize := sizes != nil
+	branchW := len("Branch")
+	changesW := len("Changes")
+	divergenceHeader := "vs " + mainBranch
+	divergenceW := len(divergenceHeader)
+	commitW := len("Commit")
+	sizeW := len("Size")
+	branches := make([]string, len(infos))
+	changes := make([]string, len(infos))
+	divergences := make([]string, len(infos))
 	sizeStrs := make([]string, len(infos))
 	var totalBytes int64
 	anyApprox := false
-	for i, in := range infos {
-		if len(in.Path) > pathW {
-			pathW = len(in.Path)
+	dirty := 0
+	unknown := 0
+	inspected := 0
+	for i, info := range infos {
+		state := WorktreeState{}
+		if i < len(states) {
+			state = states[i]
 		}
-		if len(in.SHA) > shaW {
-			shaW = len(in.SHA)
+		branches[i] = worktreeBranchLabel(info)
+		changes[i] = changesLabel(info, state)
+		divergences[i] = divergenceLabel(info, state, mainBranch)
+		branchW = max(branchW, utf8.RuneCountInString(branches[i]))
+		changesW = max(changesW, utf8.RuneCountInString(changes[i]))
+		divergenceW = max(divergenceW, utf8.RuneCountInString(divergences[i]))
+		commitW = max(commitW, utf8.RuneCountInString(info.SHA))
+		if !info.Bare {
+			if !state.StatusKnown {
+				unknown++
+			} else {
+				inspected++
+				if state.ChangeCount > 0 {
+					dirty++
+				}
+			}
 		}
-		if withSize {
+		if withSize && i < len(sizes) {
 			sizeStrs[i] = disk.Format(sizes[i])
-			if len(sizeStrs[i]) > sizeW {
-				sizeW = len(sizeStrs[i])
-			}
+			sizeW = max(sizeW, utf8.RuneCountInString(sizeStrs[i]))
 			totalBytes += sizes[i].Bytes
-			if sizes[i].Skipped > 0 {
-				anyApprox = true
-			}
+			anyApprox = anyApprox || sizes[i].Skipped > 0
 		}
 	}
 
-	totalStr := ""
-	if withSize {
-		totalStr = disk.FormatApprox(totalBytes, anyApprox)
-		if len(totalStr) > sizeW {
-			sizeW = len(totalStr)
+	const (
+		green  = "\033[32m"
+		yellow = "\033[33m"
+		red    = "\033[31m"
+		dim    = "\033[2m"
+		bold   = "\033[1m"
+		reset  = "\033[0m"
+	)
+	style := func(code, s string) string {
+		if !color {
+			return s
 		}
+		return code + s + reset
 	}
 
 	var b strings.Builder
-	for i, in := range infos {
-		var content string
-		if withSize {
-			content = fmt.Sprintf("%-*s  %*s  %-*s  %s",
-				pathW, in.Path, sizeW, sizeStrs[i], shaW, in.SHA, in.Annotation())
-		} else {
-			content = fmt.Sprintf("%-*s  %-*s  %s",
-				pathW, in.Path, shaW, in.SHA, in.Annotation())
+	header := "  " + padRight("Branch", branchW) + "  " + padRight("Changes", changesW) + "  " + padRight(divergenceHeader, divergenceW) + "  "
+	if withSize {
+		header += padRight("Size", sizeW) + "  "
+	}
+	header += padRight("Commit", commitW) + "  Path"
+	b.WriteString(style(bold, header) + "\n")
+
+	for i, info := range infos {
+		state := WorktreeState{}
+		if i < len(states) {
+			state = states[i]
 		}
-		active := activePath != "" && in.Path == activePath
-		b.WriteString(decorateLine(strings.TrimRight(content, " "), active, color) + "\n")
+		active := activePath != "" && info.Path == activePath
+		marker := "  "
+		if active {
+			marker = "› "
+		}
+		b.WriteString(style(green, marker))
+		branchCell := padRight(branches[i], branchW)
+		if active {
+			branchCell = style(green, branchCell)
+		}
+		b.WriteString(branchCell + "  ")
+
+		changesCell := padRight(changes[i], changesW)
+		switch {
+		case !state.StatusKnown && !info.Bare:
+			changesCell = style(yellow, changesCell)
+		case state.ChangeCount > 0:
+			changesCell = style(yellow, changesCell)
+		case state.StatusKnown:
+			changesCell = style(dim, changesCell)
+		}
+		b.WriteString(changesCell + "  ")
+
+		divergenceCell := divergences[i]
+		basePrefix := ""
+		if state.DivergenceBase != "" {
+			basePrefix = style(dim, state.DivergenceBase+" ")
+		}
+		switch {
+		case state.DivergenceKnown && (state.Ahead > 0 || state.Behind > 0):
+			var parts []string
+			if state.Ahead > 0 {
+				parts = append(parts, style(green, fmt.Sprintf("+%d", state.Ahead)))
+			}
+			if state.Behind > 0 {
+				parts = append(parts, style(red, fmt.Sprintf("-%d", state.Behind)))
+			}
+			divergenceCell = basePrefix + strings.Join(parts, " ")
+		case state.DivergenceKnown:
+			divergenceCell = basePrefix + style(dim, "=")
+		case info.Branch != "" && info.Branch != mainBranch:
+			divergenceCell = style(yellow, divergenceCell)
+		case state.DivergenceBase != "":
+			divergenceCell = basePrefix + style(yellow, "?")
+		}
+		divergencePadding := strings.Repeat(" ", max(0, divergenceW-utf8.RuneCountInString(divergences[i])))
+		b.WriteString(divergenceCell + divergencePadding + "  ")
+		if withSize {
+			b.WriteString(padRight(sizeStrs[i], sizeW) + "  ")
+		}
+		b.WriteString(style(dim, padRight(info.SHA, commitW)) + "  ")
+		b.WriteString(style(dim, info.Path) + "\n")
+	}
+
+	summary := fmt.Sprintf("%d worktree", len(infos))
+	if len(infos) != 1 {
+		summary += "s"
+	}
+	if dirty > 0 {
+		summary += fmt.Sprintf(" · %d with changes", dirty)
+	} else if inspected > 0 && unknown == 0 {
+		summary += " · all clean"
+	}
+	if unknown > 0 {
+		summary += fmt.Sprintf(" · %d unknown", unknown)
 	}
 	if withSize {
-		totalContent := fmt.Sprintf("%-*s  %*s", pathW, "total", sizeW, totalStr)
-		b.WriteString(decorateLine(strings.TrimRight(totalContent, " "), false, color) + "\n")
+		summary += " · total " + disk.FormatApprox(totalBytes, anyApprox)
 	}
+	b.WriteString("\n  " + style(dim, summary) + "\n")
 	return b.String()
 }
 
-// PrintWorktreeList prints the worktree list with the worktree containing the
-// caller's current directory marked. It is self-rendered from
-// `git worktree list --porcelain` (via ListWorktreesFull) at functional parity
-// with git's plain output. Color is enabled only on a terminal and when
-// NO_COLOR is unset.
-func (r *Repo) PrintWorktreeList() error {
+// PrintWorktreeList prints a branch-first table with local change counts and
+// divergence. Feature branches compare with mainBranch; mainBranch compares
+// with its configured upstream. The caller's current worktree is marked, and
+// semantic color is enabled only on a terminal when NO_COLOR is unset.
+func (r *Repo) PrintWorktreeList(mainBranch string) error {
 	infos, err := r.ListWorktreesFull()
 	if err != nil {
 		return err
 	}
-	fmt.Print(renderWorktreeTable(infos, nil, currentWorktreeTop(), shouldColor()))
+	states := r.inspectWorktrees(infos, mainBranch)
+	fmt.Print(renderDetailedWorktreeTable(infos, states, nil, currentWorktreeTop(), mainBranch, shouldColor()))
 	return nil
 }
 
 // PrintSizedWorktreeList prints the worktree list with an on-disk size column.
 // Sizes are computed concurrently across worktrees.
-func (r *Repo) PrintSizedWorktreeList() error {
+func (r *Repo) PrintSizedWorktreeList(mainBranch string) error {
 	infos, err := r.ListWorktreesFull()
 	if err != nil {
 		return err
 	}
+	states := r.inspectWorktrees(infos, mainBranch)
 	sizes := make([]disk.Result, len(infos))
 	var wg sync.WaitGroup
 	for i := range infos {
@@ -656,7 +900,7 @@ func (r *Repo) PrintSizedWorktreeList() error {
 		}(i)
 	}
 	wg.Wait()
-	fmt.Print(renderWorktreeTable(infos, sizes, currentWorktreeTop(), shouldColor()))
+	fmt.Print(renderDetailedWorktreeTable(infos, states, sizes, currentWorktreeTop(), mainBranch, shouldColor()))
 	return nil
 }
 
@@ -699,7 +943,7 @@ func (r *Repo) FindWorktreeByBranch(branch string) (string, bool, error) {
 	return "", false, nil
 }
 
-// shaAbbrevLen is the abbreviated-SHA width shown in the sized worktree list.
+// shaAbbrevLen is the abbreviated-SHA width shown in the worktree list.
 const shaAbbrevLen = 11
 
 // WorktreeInfo is a complete parse of one `git worktree list --porcelain`

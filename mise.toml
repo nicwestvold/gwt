@@ -7,6 +7,19 @@ goreleaser = "latest"
 description = "Build gwt binary (snapshot)"
 run = "goreleaser build --snapshot --clean --single-target"
 
+[tasks.dev]
+description = "Run gwt from the current checkout"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+TARGET_DIR="${GWT_DEV_CWD:-$PWD}"
+DEV_BIN=$(mktemp "${TMPDIR:-/tmp}/gwt-dev.XXXXXX")
+trap 'rm -f "$DEV_BIN"' EXIT
+go build -o "$DEV_BIN" .
+cd "$TARGET_DIR"
+"$DEV_BIN" "$@"
+'''
+
 [tasks.test]
 description = "Run tests"
 run = "go test ./..."

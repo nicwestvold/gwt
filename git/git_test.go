@@ -762,9 +762,9 @@ func TestCleanEmptyParents(t *testing.T) {
 
 func TestParseWorktreeList(t *testing.T) {
 	tests := []struct {
-		name   string
-		input  string
-		want   []WorktreeEntry
+		name  string
+		input string
+		want  []WorktreeEntry
 	}{
 		{
 			name: "multiple entries",
@@ -1041,85 +1041,184 @@ func TestWorktreeInfoAnnotation(t *testing.T) {
 	}
 }
 
-func TestRenderWorktreeTableSized(t *testing.T) {
-	infos := []WorktreeInfo{
-		{Path: "/repo/main", SHA: "27233475638", Branch: "main"},
-		{Path: "/repo/feature-x", SHA: "00666edca69", Branch: "feature-x"},
+func TestCountStatusChanges(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   int
+	}{
+		{name: "clean", output: "", want: 0},
+		{name: "one", output: " M README.md\n", want: 1},
+		{name: "multiple", output: " M README.md\n?? notes.txt\nA  new.go\n", want: 3},
+		{name: "no trailing newline", output: " M README.md\n?? notes.txt", want: 2},
 	}
-	sizes := []disk.Result{
-		{Bytes: 4831838208},             // ~4.5 GiB
-		{Bytes: 1288490188, Skipped: 2}, // ~1.2 GiB, approximate
-	}
-	out := renderWorktreeTable(infos, sizes, "/repo/main", false)
-
-	if !strings.Contains(out, "* /repo/main") {
-		t.Errorf("active marker missing:\n%s", out)
-	}
-	if !strings.Contains(out, "[main]") || !strings.Contains(out, "[feature-x]") {
-		t.Errorf("branch annotations missing:\n%s", out)
-	}
-	if !strings.Contains(out, "~1.2 GiB") {
-		t.Errorf("approximate marker missing on feature-x:\n%s", out)
-	}
-	if !strings.Contains(out, "total") || !strings.Contains(out, "~") {
-		t.Errorf("total row wrong:\n%s", out)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := countStatusChanges(tt.output); got != tt.want {
+				t.Errorf("countStatusChanges() = %d, want %d", got, tt.want)
+			}
+		})
 	}
 }
 
-func TestRenderWorktreeTableSizedColorActiveRow(t *testing.T) {
-	infos := []WorktreeInfo{{Path: "/repo/main", SHA: "abc", Branch: "main"}}
-	sizes := []disk.Result{{Bytes: 1024}}
-	out := renderWorktreeTable(infos, sizes, "/repo/main", true)
-	if !strings.Contains(out, "\033[32m") {
-		t.Errorf("expected green on active row:\n%q", out)
+func TestParseDivergence(t *testing.T) {
+	ahead, behind, ok := parseDivergence("2\t27\n")
+	if !ok || ahead != 27 || behind != 2 {
+		t.Fatalf("parseDivergence() = (%d, %d, %t), want (27, 2, true)", ahead, behind, ok)
+	}
+	if _, _, ok := parseDivergence("not counts"); ok {
+		t.Fatal("parseDivergence() accepted invalid output")
 	}
 }
 
-func TestRenderWorktreeTableBare(t *testing.T) {
-	const green = "\033[32m"
-	const reset = "\033[0m"
-	infos := []WorktreeInfo{
-		{Path: "/repo/main", SHA: "27233475638", Branch: "main"},
-		{Path: "/repo/wt-detached", SHA: "00666edca69", Detached: true},
-		{Path: "/repo/bare", Bare: true},
-		{Path: "/repo/locked-wt", SHA: "689fff37a9c", Branch: "feature", Locked: true},
+func TestInspectWorktrees(t *testing.T) {
+	root := t.TempDir()
+	repoDir := filepath.Join(root, "repo")
+	featureDir := filepath.Join(root, "feature")
+	remoteDir := filepath.Join(root, "remote.git")
+	initRepoWithMain(t, repoDir)
+	testRunGit(t, "git", "init", "--bare", remoteDir)
+	testRunGit(t, "git", "-C", repoDir, "remote", "add", "origin", remoteDir)
+	testRunGit(t, "git", "-C", repoDir, "push", "-u", "origin", "main")
+	if err := AddWorktreeAt(repoDir, []string{"-b", "feature", featureDir, "main"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(featureDir, "feature.txt"), []byte("feature"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testRunGit(t, "git", "-C", featureDir, "add", "feature.txt")
+	testRunGit(t, "git", "-C", featureDir, "commit", "-m", "feature commit")
+	if err := os.WriteFile(filepath.Join(repoDir, "README"), []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
-	// Bare mode: no size column, no total row.
-	out := renderWorktreeTable(infos, nil, "/repo/main", false)
-	if strings.Contains(out, "total") {
-		t.Errorf("bare mode should have no total row:\n%s", out)
+	repo := &Repo{Dir: repoDir}
+	infos, err := repo.ListWorktreesFull()
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, want := range []string{"[main]", "(detached HEAD)", "(bare)", "[feature] locked"} {
+	states := repo.inspectWorktrees(infos, "main")
+	if len(states) != 2 {
+		t.Fatalf("inspectWorktrees() returned %d states, want 2", len(states))
+	}
+	for i, info := range infos {
+		switch info.Branch {
+		case "main":
+			if !states[i].StatusKnown || states[i].ChangeCount != 1 {
+				t.Errorf("main state = %+v, want one change", states[i])
+			}
+			if !states[i].DivergenceKnown || states[i].DivergenceBase != "origin" || states[i].Ahead != 0 || states[i].Behind != 0 {
+				t.Errorf("main divergence = %+v, want origin =", states[i])
+			}
+		case "feature":
+			if !states[i].StatusKnown || states[i].ChangeCount != 0 {
+				t.Errorf("feature status = %+v, want clean", states[i])
+			}
+			if !states[i].DivergenceKnown || states[i].Ahead != 1 || states[i].Behind != 0 {
+				t.Errorf("feature divergence = %+v, want +1", states[i])
+			}
+		default:
+			t.Errorf("unexpected branch %q", info.Branch)
+		}
+	}
+}
+
+func TestWorktreeStateLabels(t *testing.T) {
+	main := WorktreeInfo{Branch: "main"}
+	feature := WorktreeInfo{Branch: "feature"}
+	if got := changesLabel(main, WorktreeState{StatusKnown: true}); got != "—" {
+		t.Errorf("clean changesLabel = %q", got)
+	}
+	if got := changesLabel(feature, WorktreeState{StatusKnown: true, ChangeCount: 1}); got != "Δ1" {
+		t.Errorf("one-change changesLabel = %q", got)
+	}
+	if got := changesLabel(feature, WorktreeState{StatusKnown: true, ChangeCount: 4}); got != "Δ4" {
+		t.Errorf("multi-change changesLabel = %q", got)
+	}
+	if got := divergenceLabel(main, WorktreeState{}, "main"); got != "—" {
+		t.Errorf("main divergenceLabel = %q", got)
+	}
+	if got := divergenceLabel(main, WorktreeState{DivergenceKnown: true, DivergenceBase: "origin"}, "main"); got != "origin =" {
+		t.Errorf("current main divergenceLabel = %q", got)
+	}
+	if got := divergenceLabel(main, WorktreeState{DivergenceKnown: true, DivergenceBase: "origin", Ahead: 1, Behind: 2}, "main"); got != "origin +1 -2" {
+		t.Errorf("diverged main divergenceLabel = %q", got)
+	}
+	if got := divergenceLabel(feature, WorktreeState{DivergenceKnown: true}, "main"); got != "=" {
+		t.Errorf("current divergenceLabel = %q", got)
+	}
+	if got := divergenceLabel(feature, WorktreeState{DivergenceKnown: true, Ahead: 27, Behind: 2}, "main"); got != "+27 -2" {
+		t.Errorf("diverged divergenceLabel = %q", got)
+	}
+
+	labels := []struct {
+		info WorktreeInfo
+		want string
+	}{
+		{info: WorktreeInfo{Branch: "feature"}, want: "feature"},
+		{info: WorktreeInfo{Detached: true}, want: "(detached HEAD)"},
+		{info: WorktreeInfo{Bare: true}, want: "(bare)"},
+		{info: WorktreeInfo{Branch: "feature", Locked: true, Prunable: true}, want: "feature (locked, prunable)"},
+	}
+	for _, tt := range labels {
+		if got := worktreeBranchLabel(tt.info); got != tt.want {
+			t.Errorf("worktreeBranchLabel(%+v) = %q, want %q", tt.info, got, tt.want)
+		}
+	}
+}
+
+func TestRenderDetailedWorktreeTable(t *testing.T) {
+	infos := []WorktreeInfo{
+		{Path: "/repo/main", SHA: "728a00a60cd", Branch: "main"},
+		{Path: "/repo/feature", SHA: "edc337a1f18", Branch: "feature"},
+		{Path: "/repo/review", SHA: "a17423109c0", Branch: "review"},
+	}
+	states := []WorktreeState{
+		{StatusKnown: true, DivergenceKnown: true, DivergenceBase: "origin", Ahead: 1},
+		{StatusKnown: true, ChangeCount: 10, DivergenceKnown: true, Ahead: 27, Behind: 2},
+		{StatusKnown: true, ChangeCount: 1, DivergenceKnown: true, Ahead: 3},
+	}
+	out := renderDetailedWorktreeTable(infos, states, nil, "/repo/feature", "main", false)
+
+	for _, want := range []string{
+		"Branch", "Changes", "vs main", "Commit", "Path",
+		"—", "Δ10", "Δ1", "origin +1", "+27 -2", "+3",
+		"› feature", "/repo/main", "3 worktrees · 2 with changes",
+	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("missing annotation %q:\n%s", want, out)
+			t.Errorf("missing %q:\n%s", want, out)
 		}
 	}
-	if !strings.HasPrefix(out, "* /repo/main") {
-		t.Errorf("active row not marked first:\n%s", out)
-	}
-	// Non-active rows are indented, not starred.
-	if !strings.Contains(out, "  /repo/bare") {
-		t.Errorf("bare row not indented:\n%s", out)
+	if strings.Contains(out, "\033[") {
+		t.Errorf("color disabled but output contains ANSI escapes:\n%q", out)
 	}
 
-	// Color gating on the active row.
-	colored := renderWorktreeTable(infos, nil, "/repo/main", true)
-	if !strings.Contains(colored, green+"* /repo/main") || !strings.Contains(colored, reset) {
-		t.Errorf("active row not green:\n%q", colored)
-	}
-
-	// No active path (e.g. run outside any worktree): every row indented, none starred.
-	noActive := renderWorktreeTable(infos, nil, "", false)
-	for _, line := range strings.Split(strings.TrimRight(noActive, "\n"), "\n") {
-		if strings.HasPrefix(line, "* ") {
-			t.Errorf("no active path should mark no row, got:\n%s", noActive)
+	colored := renderDetailedWorktreeTable(infos, states, nil, "/repo/feature", "main", true)
+	for _, want := range []string{"\033[32m+27", "\033[31m-2", "\033[33mΔ10"} {
+		if !strings.Contains(colored, want) {
+			t.Errorf("expected semantic color %q:\n%q", want, colored)
 		}
 	}
+	if got := renderDetailedWorktreeTable(nil, nil, nil, "", "main", false); got != "" {
+		t.Errorf("empty table = %q, want empty", got)
+	}
+}
 
-	// Empty input yields an empty string.
-	if got := renderWorktreeTable(nil, nil, "", false); got != "" {
-		t.Errorf("empty infos = %q, want \"\"", got)
+func TestRenderDetailedWorktreeTableSized(t *testing.T) {
+	infos := []WorktreeInfo{
+		{Path: "/repo/main", SHA: "728a00a60cd", Branch: "main"},
+		{Path: "/repo/feature", SHA: "edc337a1f18", Branch: "feature"},
+	}
+	states := []WorktreeState{
+		{StatusKnown: true},
+		{StatusKnown: true, DivergenceKnown: true},
+	}
+	sizes := []disk.Result{{Bytes: 1024}, {Bytes: 2048, Skipped: 1}}
+	out := renderDetailedWorktreeTable(infos, states, sizes, "/repo/main", "main", false)
+	for _, want := range []string{"Size", "1.0 KiB", "~2.0 KiB", "2 worktrees · all clean · total ~3.0 KiB"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
 	}
 }
 

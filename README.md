@@ -168,7 +168,7 @@ Followers mirror the branch: an existing branch is checked out, otherwise it's c
 These git worktree subcommands are forwarded directly:
 
 ```bash
-gwt list                                 # list worktrees, marking the active one
+gwt list                                 # list branches, changes, divergence, commits, and paths
 gwt prune                                # git worktree prune
 gwt lock <worktree>                      # git worktree lock
 gwt unlock <worktree>                    # git worktree unlock
@@ -176,7 +176,7 @@ gwt move <worktree> <new-path>           # git worktree move
 gwt repair                               # git worktree repair
 ```
 
-`ls` is an alias for `list`. Bare `gwt list`/`gwt ls` marks the active worktree with `*` (green on a TTY); adding any flag (e.g. `--porcelain`) falls through to plain `git worktree list`. Unrecognized commands are rejected — only the above are passed through.
+`ls` is an alias for `list`. Bare `gwt list`/`gwt ls` shows a branch-first table with each worktree's change count and `+ahead -behind` divergence. `—` means no working-tree changes; `=` means no commit divergence. Feature branches compare with the configured main branch; the main branch compares with its configured upstream (for example, `origin +1`). The active worktree is marked with `›`; `-s`/`--size` adds disk usage. Status and divergence checks use only local Git data and run concurrently. Other flags (e.g. `--porcelain`) fall through to plain `git worktree list`. Unrecognized commands are rejected — only the above are passed through.
 
 ### AI Coding Assistants
 
@@ -202,12 +202,14 @@ gwt version
 Tooling and tasks run through [mise](https://mise.jdx.dev):
 
 ```bash
-mise run build       # build a snapshot binary (goreleaser)
-mise run test        # run the test suite
-mise run lint        # run golangci-lint
-mise run check       # lint + test + go mod tidy
-mise run coverage    # HTML coverage report
-mise run release     # interactive tag + publish
+mise run dev -- ls                    # run this checkout against the gwt repo
+GWT_DEV_CWD=../koh mise run dev -- ls # run it against another repo
+mise run build                        # build a snapshot binary (goreleaser)
+mise run test                         # run the test suite
+mise run lint                         # run golangci-lint
+mise run check                        # lint + test + go mod tidy
+mise run coverage                     # HTML coverage report
+mise run release                      # interactive tag + publish
 ```
 
 ## Requirements
