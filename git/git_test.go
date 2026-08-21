@@ -1178,7 +1178,7 @@ func TestRenderDetailedWorktreeTable(t *testing.T) {
 		{StatusKnown: true, ChangeCount: 10, DivergenceKnown: true, Ahead: 27, Behind: 2},
 		{StatusKnown: true, ChangeCount: 1, DivergenceKnown: true, Ahead: 3},
 	}
-	out := renderDetailedWorktreeTable(infos, states, nil, "/repo/feature", "main", false)
+	out := renderDetailedWorktreeTable(infos, states, nil, "/repo/feature", "", "main", false)
 
 	for _, want := range []string{
 		"Branch", "Changes", "vs main", "Commit", "Path",
@@ -1193,13 +1193,13 @@ func TestRenderDetailedWorktreeTable(t *testing.T) {
 		t.Errorf("color disabled but output contains ANSI escapes:\n%q", out)
 	}
 
-	colored := renderDetailedWorktreeTable(infos, states, nil, "/repo/feature", "main", true)
+	colored := renderDetailedWorktreeTable(infos, states, nil, "/repo/feature", "", "main", true)
 	for _, want := range []string{"\033[32m+27", "\033[31m-2", "\033[33mΔ10"} {
 		if !strings.Contains(colored, want) {
 			t.Errorf("expected semantic color %q:\n%q", want, colored)
 		}
 	}
-	if got := renderDetailedWorktreeTable(nil, nil, nil, "", "main", false); got != "" {
+	if got := renderDetailedWorktreeTable(nil, nil, nil, "", "", "main", false); got != "" {
 		t.Errorf("empty table = %q, want empty", got)
 	}
 }
@@ -1214,11 +1214,44 @@ func TestRenderDetailedWorktreeTableSized(t *testing.T) {
 		{StatusKnown: true, DivergenceKnown: true},
 	}
 	sizes := []disk.Result{{Bytes: 1024}, {Bytes: 2048, Skipped: 1}}
-	out := renderDetailedWorktreeTable(infos, states, sizes, "/repo/main", "main", false)
+	out := renderDetailedWorktreeTable(infos, states, sizes, "/repo/main", "", "main", false)
 	for _, want := range []string{"Size", "1.0 KiB", "~2.0 KiB", "2 worktrees · all clean · total ~3.0 KiB"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestWorktreeListSelection(t *testing.T) {
+	list := &WorktreeList{
+		infos: []WorktreeInfo{
+			{Path: "/repo/main", SHA: "abc", Branch: "main"},
+			{Path: "/repo/feature", SHA: "def", Branch: "feature"},
+			{Path: "/repo/detached", SHA: "123", Detached: true},
+			{Path: "/repo/bare", Bare: true},
+		},
+		states: []WorktreeState{
+			{StatusKnown: true},
+			{StatusKnown: true, DivergenceKnown: true},
+			{StatusKnown: true},
+			{},
+		},
+		activePath: "/repo/main",
+		mainBranch: "main",
+	}
+	choices := list.Choices()
+	if len(choices) != 2 || choices[0].Branch != "main" || choices[1].Branch != "feature" {
+		t.Fatalf("Choices() = %+v, want main and feature", choices)
+	}
+	if list.ActivePath() != "/repo/main" {
+		t.Errorf("ActivePath() = %q", list.ActivePath())
+	}
+	out := list.Render("/repo/feature", false)
+	if !strings.Contains(out, "› feature") {
+		t.Errorf("selected marker missing:\n%s", out)
+	}
+	if strings.Contains(out, "› main") {
+		t.Errorf("active row retained marker during selection:\n%s", out)
 	}
 }
 

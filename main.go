@@ -70,7 +70,7 @@ Enhanced commands:
   add        Create a worktree (setup handled by post-checkout hook)
   list/ls    List branches, changes, and divergence from the main branch
   remove/rm  Remove a worktree by path or branch name (auto-cd back)
-  use        Switch to an existing worktree by branch name`,
+  use        Switch to an existing worktree`,
 }
 
 type hookOptions struct {
@@ -528,21 +528,40 @@ func completeWorktreeBranches(cmd *cobra.Command, args []string, toComplete stri
 }
 
 var useCmd = &cobra.Command{
-	Use:   "use <branch>",
-	Short: "Switch to an existing worktree by branch name",
+	Use:   "use [branch]",
+	Short: "Switch to an existing worktree",
 	Long: `Navigate to an existing worktree that has the given branch checked out.
+
+With no branch, opens an interactive worktree list. Use the arrow keys or j/k
+to move, Enter to select, and q or Ctrl-C to cancel.
 
 If no worktree is found for the branch, suggests creating one with 'gwt add'.
 
 Requires shell integration (eval "$(gwt shell-init)") for the cd to work.`,
-	Args:              cobra.ExactArgs(1),
+	Args:              cobra.MaximumNArgs(1),
 	ValidArgsFunction: completeWorktreeBranches,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		branch := args[0]
-
 		repo, err := git.NewRepo()
 		if err != nil {
 			return err
+		}
+
+		var branch string
+		if len(args) == 0 {
+			list, err := repo.LoadWorktreeList(listMainBranch(repo))
+			if err != nil {
+				return err
+			}
+			choice, accepted, err := selectWorktree(list)
+			if err != nil {
+				return err
+			}
+			if !accepted {
+				return nil
+			}
+			branch = choice.Branch
+		} else {
+			branch = args[0]
 		}
 
 		path, found, err := repo.FindWorktreeByBranch(branch)

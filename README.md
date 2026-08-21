@@ -134,10 +134,11 @@ After removing the worktree, `gwt` does a best-effort `git branch -d` to clean u
 ### Use
 
 ```bash
+gwt use                                  # interactively select a worktree
 gwt use my-feature                       # cd into the worktree for this branch
 ```
 
-Finds the worktree checked out on the given branch and switches to it (needs shell integration). If none exists, it suggests `gwt add`.
+With no branch, `gwt use` opens the enriched worktree list; use the arrow keys or `j`/`k` to move, Enter to select, and `q` or Ctrl-C to cancel. With a branch, it finds that worktree directly. Both forms switch through the same shell integration. If a named branch has no worktree, it suggests `gwt add`.
 
 ### Workspaces
 

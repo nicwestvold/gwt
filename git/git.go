@@ -716,7 +716,7 @@ func padRight(s string, width int) string {
 // so long centralized-worktree paths cannot push status and divergence off
 // screen. When sizes is non-nil, it adds a Size column and includes the total
 // in the summary line.
-func renderDetailedWorktreeTable(infos []WorktreeInfo, states []WorktreeState, sizes []disk.Result, activePath, mainBranch string, color bool) string {
+func renderDetailedWorktreeTable(infos []WorktreeInfo, states []WorktreeState, sizes []disk.Result, activePath, selectedPath, mainBranch string, color bool) string {
 	if len(infos) == 0 {
 		return ""
 	}
@@ -795,14 +795,18 @@ func renderDetailedWorktreeTable(infos []WorktreeInfo, states []WorktreeState, s
 			state = states[i]
 		}
 		active := activePath != "" && info.Path == activePath
+		selected := selectedPath != "" && info.Path == selectedPath
 		marker := "  "
-		if active {
+		if selected || (selectedPath == "" && active) {
 			marker = "› "
 		}
 		b.WriteString(style(green, marker))
 		branchCell := padRight(branches[i], branchW)
 		if active {
 			branchCell = style(green, branchCell)
+		}
+		if selected {
+			branchCell = style(bold, branchCell)
 		}
 		b.WriteString(branchCell + "  ")
 
@@ -867,17 +871,62 @@ func renderDetailedWorktreeTable(infos []WorktreeInfo, states []WorktreeState, s
 	return b.String()
 }
 
+// WorktreeList is an enriched, reusable view of the repository's worktrees.
+// It powers both the static list command and interactive worktree selection.
+type WorktreeList struct {
+	infos      []WorktreeInfo
+	states     []WorktreeState
+	activePath string
+	mainBranch string
+}
+
+// LoadWorktreeList collects worktree rows, local status, and divergence once.
+func (r *Repo) LoadWorktreeList(mainBranch string) (*WorktreeList, error) {
+	infos, err := r.ListWorktreesFull()
+	if err != nil {
+		return nil, err
+	}
+	return &WorktreeList{
+		infos:      infos,
+		states:     r.inspectWorktrees(infos, mainBranch),
+		activePath: currentWorktreeTop(),
+		mainBranch: mainBranch,
+	}, nil
+}
+
+// Choices returns the branch-backed worktrees that can be selected by use.
+func (l *WorktreeList) Choices() []WorktreeEntry {
+	choices := make([]WorktreeEntry, 0, len(l.infos))
+	for _, info := range l.infos {
+		if info.Branch != "" {
+			choices = append(choices, WorktreeEntry{Path: info.Path, Branch: info.Branch})
+		}
+	}
+	return choices
+}
+
+// ActivePath returns the worktree containing the caller's current directory.
+func (l *WorktreeList) ActivePath() string {
+	return l.activePath
+}
+
+// Render returns the list table, optionally marking selectedPath instead of
+// the active worktree. Selection keeps the active branch green so both states
+// remain visible as the cursor moves.
+func (l *WorktreeList) Render(selectedPath string, color bool) string {
+	return renderDetailedWorktreeTable(l.infos, l.states, nil, l.activePath, selectedPath, l.mainBranch, color)
+}
+
 // PrintWorktreeList prints a branch-first table with local change counts and
 // divergence. Feature branches compare with mainBranch; mainBranch compares
 // with its configured upstream. The caller's current worktree is marked, and
 // semantic color is enabled only on a terminal when NO_COLOR is unset.
 func (r *Repo) PrintWorktreeList(mainBranch string) error {
-	infos, err := r.ListWorktreesFull()
+	list, err := r.LoadWorktreeList(mainBranch)
 	if err != nil {
 		return err
 	}
-	states := r.inspectWorktrees(infos, mainBranch)
-	fmt.Print(renderDetailedWorktreeTable(infos, states, nil, currentWorktreeTop(), mainBranch, shouldColor()))
+	fmt.Print(list.Render("", shouldColor()))
 	return nil
 }
 
@@ -900,7 +949,7 @@ func (r *Repo) PrintSizedWorktreeList(mainBranch string) error {
 		}(i)
 	}
 	wg.Wait()
-	fmt.Print(renderDetailedWorktreeTable(infos, states, sizes, currentWorktreeTop(), mainBranch, shouldColor()))
+	fmt.Print(renderDetailedWorktreeTable(infos, states, sizes, currentWorktreeTop(), "", mainBranch, shouldColor()))
 	return nil
 }
 
