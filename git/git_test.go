@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/nicwestvold/gwt/disk"
 )
@@ -1241,6 +1242,22 @@ func TestRenderDetailedWorktreeTableSized(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
 		}
+	}
+	lines := strings.Split(out, "\n")
+	rightEdge := func(line, value string) int {
+		start := strings.Index(line, value)
+		if start < 0 {
+			t.Fatalf("missing %q in line %q", value, line)
+		}
+		return utf8.RuneCountInString(line[:start]) + utf8.RuneCountInString(value)
+	}
+	rightEdges := []int{
+		rightEdge(lines[0], "Size"),
+		rightEdge(lines[1], "1.0 KiB"),
+		rightEdge(lines[2], "~2.0 KiB"),
+	}
+	if rightEdges[0] != rightEdges[1] || rightEdges[1] != rightEdges[2] {
+		t.Errorf("Size column is not right-aligned (right edges %v):\n%s", rightEdges, out)
 	}
 }
 

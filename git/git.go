@@ -712,6 +712,10 @@ func padRight(s string, width int) string {
 	return s + strings.Repeat(" ", max(0, width-utf8.RuneCountInString(s)))
 }
 
+func padLeft(s string, width int) string {
+	return strings.Repeat(" ", max(0, width-utf8.RuneCountInString(s))) + s
+}
+
 func homeRelativePath(path, home string) string {
 	if home == "" {
 		return path
@@ -799,7 +803,7 @@ func renderDetailedWorktreeTable(infos []WorktreeInfo, states []WorktreeState, s
 	var b strings.Builder
 	header := "  " + padRight("Branch", branchW) + "  " + padRight("Changes", changesW) + "  " + padRight(divergenceHeader, divergenceW) + "  "
 	if withSize {
-		header += padRight("Size", sizeW) + "  "
+		header += padLeft("Size", sizeW) + "  "
 	}
 	header += padRight("Commit", commitW) + "  Path"
 	b.WriteString(style(bold, header) + "\n")
@@ -861,7 +865,7 @@ func renderDetailedWorktreeTable(infos []WorktreeInfo, states []WorktreeState, s
 		divergencePadding := strings.Repeat(" ", max(0, divergenceW-utf8.RuneCountInString(divergences[i])))
 		b.WriteString(divergenceCell + divergencePadding + "  ")
 		if withSize {
-			b.WriteString(padRight(sizeStrs[i], sizeW) + "  ")
+			b.WriteString(padLeft(sizeStrs[i], sizeW) + "  ")
 		}
 		b.WriteString(style(dim, padRight(info.SHA, commitW)) + "  ")
 		b.WriteString(style(dim, homeRelativePath(info.Path, home)) + "\n")
