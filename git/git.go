@@ -99,8 +99,7 @@ func (r *Repo) Passthrough(args []string) error {
 type RemoveResult struct {
 	RepoDir      string
 	WorktreePath string
-	Branch       string      // "" if detached
-	Freed        disk.Result // on-disk space reclaimed
+	Branch       string // "" if detached
 }
 
 // Remove removes a worktree. If no positional path argument is provided,
@@ -174,8 +173,6 @@ func (r *Repo) Remove(args []string, keepBranch bool) (RemoveResult, error) {
 		}
 	}
 
-	freed, _ := disk.Size(worktreePath) // best-effort; never blocks removal
-
 	gitArgs := []string{"worktree", "remove"}
 	gitArgs = append(gitArgs, flags...)
 	gitArgs = append(gitArgs, worktreePath)
@@ -204,7 +201,6 @@ func (r *Repo) Remove(args []string, keepBranch bool) (RemoveResult, error) {
 		RepoDir:      r.Dir,
 		WorktreePath: worktreePath,
 		Branch:       branch,
-		Freed:        freed,
 	}, nil
 }
 

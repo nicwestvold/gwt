@@ -496,18 +496,14 @@ func TestAdd(t *testing.T) {
 }
 
 func TestRemoveReturnsResult(t *testing.T) {
-	// Verifies the struct shape and that display name falls back to path base.
+	// Verifies the result fields needed by the caller.
 	rr := RemoveResult{
 		RepoDir:      "/repo",
 		WorktreePath: "/repo/wt/feature-x",
 		Branch:       "feature-x",
-		Freed:        disk.Result{Bytes: 1288490188},
 	}
-	if rr.Branch != "feature-x" {
-		t.Fatal("branch field")
-	}
-	if disk.Format(rr.Freed) != "1.2 GiB" {
-		t.Errorf("freed format = %q", disk.Format(rr.Freed))
+	if rr.RepoDir != "/repo" || rr.WorktreePath != "/repo/wt/feature-x" || rr.Branch != "feature-x" {
+		t.Fatal("unexpected remove result fields")
 	}
 }
 

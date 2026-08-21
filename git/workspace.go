@@ -6,8 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-
-	"github.com/nicwestvold/gwt/disk"
 )
 
 // BranchExists reports whether branch exists locally or as an origin
@@ -67,9 +65,8 @@ func AddWorktreeAt(repoDir string, gitArgs []string) error {
 
 // MemberRemoval reports the outcome of removing one workspace member worktree.
 type MemberRemoval struct {
-	Freed      disk.Result // reclaimed space (zero if removal failed)
-	BranchKept string      // branch left undeleted because it was not merged
-	Err        error       // worktree-removal error; nil on success
+	BranchKept string // branch left undeleted because it was not merged
+	Err        error  // worktree-removal error; nil on success
 }
 
 // RemoveMemberWorktree removes one member's worktree and, unless keepBranch,
@@ -86,8 +83,6 @@ func RemoveMemberWorktree(repoDir, worktreePath string, keepBranch, force bool) 
 		}
 	}
 
-	freed, _ := disk.Size(worktreePath) // best-effort, before removal
-
 	args := []string{"-C", repoDir, "worktree", "remove"}
 	if force {
 		args = append(args, "--force")
@@ -99,7 +94,7 @@ func RemoveMemberWorktree(repoDir, worktreePath string, keepBranch, force bool) 
 		return MemberRemoval{Err: fmt.Errorf("git worktree remove failed for %s: %w", worktreePath, err)}
 	}
 
-	mr := MemberRemoval{Freed: freed}
+	mr := MemberRemoval{}
 	if !keepBranch && branch != "" {
 		del := exec.Command("git", "-C", repoDir, "branch", "-d", branch)
 		if err := del.Run(); err != nil {

@@ -5,8 +5,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/nicwestvold/gwt/disk"
 )
 
 // initRepoWithMain creates a git repo at dir with one commit on "main".
@@ -119,14 +117,10 @@ func TestRunSetup(t *testing.T) {
 
 func TestMemberRemovalShape(t *testing.T) {
 	mr := MemberRemoval{
-		Freed:      disk.Result{Bytes: 2202009600}, // ~2.05 GiB
 		BranchKept: "feature-x",
 		Err:        nil,
 	}
 	if mr.BranchKept != "feature-x" || mr.Err != nil {
 		t.Fatal("fields")
-	}
-	if mr.Freed.Bytes == 0 {
-		t.Fatal("freed")
 	}
 }

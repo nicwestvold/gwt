@@ -12,7 +12,6 @@ import (
 
 	"github.com/nicwestvold/gwt/config"
 	"github.com/nicwestvold/gwt/detect"
-	"github.com/nicwestvold/gwt/disk"
 	"github.com/nicwestvold/gwt/git"
 	"github.com/nicwestvold/gwt/hook"
 	"github.com/spf13/cobra"
@@ -494,11 +493,7 @@ Supports all git worktree remove flags (e.g., --force).`,
 		if name == "" {
 			name = filepath.Base(res.WorktreePath)
 		}
-		if res.Freed.Bytes > 0 {
-			fmt.Printf("removed worktree %s — freed %s\n", name, disk.Format(res.Freed))
-		} else {
-			fmt.Printf("removed worktree %s\n", name)
-		}
+		fmt.Printf("removed worktree %s\n", name)
 
 		git.WriteCdFile(res.RepoDir)
 		return nil
@@ -894,8 +889,6 @@ func runWorkspaceRemove(cfg *config.Config, wsName string, ws config.WorkspaceEn
 	wg.Wait()
 
 	// Aggregate.
-	var totalBytes int64
-	anyApprox := false
 	removed, attempted := 0, 0
 	var failures []string                 // "repo: reason"
 	keptBranches := map[string][]string{} // branch -> repos
@@ -909,10 +902,6 @@ func runWorkspaceRemove(cfg *config.Config, wsName string, ws config.WorkspaceEn
 			continue
 		}
 		removed++
-		totalBytes += res.mr.Freed.Bytes
-		if res.mr.Freed.Skipped > 0 {
-			anyApprox = true
-		}
 		if res.mr.BranchKept != "" {
 			keptBranches[res.mr.BranchKept] = append(keptBranches[res.mr.BranchKept], res.name)
 		}
@@ -927,11 +916,10 @@ func runWorkspaceRemove(cfg *config.Config, wsName string, ws config.WorkspaceEn
 
 	// Report.
 	groupName := filepath.Base(group)
-	sizeStr := disk.FormatApprox(totalBytes, anyApprox)
 	if len(failures) == 0 {
-		fmt.Printf("removed workspace group %s (%d repos) — freed %s\n", groupName, removed, sizeStr)
+		fmt.Printf("removed workspace group %s (%d repos)\n", groupName, removed)
 	} else {
-		fmt.Printf("removed %d/%d repos — freed %s\n", removed, attempted, sizeStr)
+		fmt.Printf("removed %d/%d repos\n", removed, attempted)
 		for _, f := range failures {
 			fmt.Printf("  ! %s\n", f)
 		}
