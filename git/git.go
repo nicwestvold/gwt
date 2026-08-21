@@ -712,6 +712,20 @@ func padRight(s string, width int) string {
 	return s + strings.Repeat(" ", max(0, width-utf8.RuneCountInString(s)))
 }
 
+func homeRelativePath(path, home string) string {
+	if home == "" {
+		return path
+	}
+	if path == home {
+		return "~"
+	}
+	prefix := home + string(filepath.Separator)
+	if strings.HasPrefix(path, prefix) {
+		return "~" + strings.TrimPrefix(path, home)
+	}
+	return path
+}
+
 // renderDetailedWorktreeTable renders a branch-first table. The path is last
 // so long centralized-worktree paths cannot push status and divergence off
 // screen. When sizes is non-nil, it adds a Size column and includes the total
@@ -780,6 +794,7 @@ func renderDetailedWorktreeTable(infos []WorktreeInfo, states []WorktreeState, s
 		}
 		return code + s + reset
 	}
+	home, _ := os.UserHomeDir()
 
 	var b strings.Builder
 	header := "  " + padRight("Branch", branchW) + "  " + padRight("Changes", changesW) + "  " + padRight(divergenceHeader, divergenceW) + "  "
@@ -849,7 +864,7 @@ func renderDetailedWorktreeTable(infos []WorktreeInfo, states []WorktreeState, s
 			b.WriteString(padRight(sizeStrs[i], sizeW) + "  ")
 		}
 		b.WriteString(style(dim, padRight(info.SHA, commitW)) + "  ")
-		b.WriteString(style(dim, info.Path) + "\n")
+		b.WriteString(style(dim, homeRelativePath(info.Path, home)) + "\n")
 	}
 
 	summary := fmt.Sprintf("%d worktree", len(infos))

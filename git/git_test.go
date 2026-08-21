@@ -1204,6 +1204,28 @@ func TestRenderDetailedWorktreeTable(t *testing.T) {
 	}
 }
 
+func TestHomeRelativePath(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		home string
+		want string
+	}{
+		{name: "home", path: "/Users/nic", home: "/Users/nic", want: "~"},
+		{name: "inside home", path: "/Users/nic/code/gwt", home: "/Users/nic", want: "~/code/gwt"},
+		{name: "similar prefix", path: "/Users/nic-other/code", home: "/Users/nic", want: "/Users/nic-other/code"},
+		{name: "outside home", path: "/opt/code/gwt", home: "/Users/nic", want: "/opt/code/gwt"},
+		{name: "unknown home", path: "/Users/nic/code", home: "", want: "/Users/nic/code"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := homeRelativePath(tt.path, tt.home); got != tt.want {
+				t.Errorf("homeRelativePath(%q, %q) = %q, want %q", tt.path, tt.home, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRenderDetailedWorktreeTableSized(t *testing.T) {
 	infos := []WorktreeInfo{
 		{Path: "/repo/main", SHA: "728a00a60cd", Branch: "main"},
