@@ -124,3 +124,77 @@ func TestMemberRemovalShape(t *testing.T) {
 		t.Fatal("fields")
 	}
 }
+
+func TestClearStaleWorktreePathRemovesLeftovers(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	initRepoWithMain(t, repo)
+
+	// A previous worktree left one ignored build artifact behind. Git no longer
+	// tracks the path, but its presence makes `git worktree add` refuse.
+	stale := filepath.Join(root, "worktrees", "feat-x")
+	if err := os.MkdirAll(filepath.Join(stale, "public", "build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, "public", "build", "manifest.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ClearStaleWorktreePath(repo, stale); err != nil {
+		t.Fatalf("ClearStaleWorktreePath error: %v", err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale dir still present: %v", err)
+	}
+}
+
+func TestClearStaleWorktreePathIgnoresMissingPath(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	initRepoWithMain(t, repo)
+
+	if err := ClearStaleWorktreePath(repo, filepath.Join(root, "nope")); err != nil {
+		t.Errorf("ClearStaleWorktreePath on missing path = %v, want nil", err)
+	}
+}
+
+func TestClearStaleWorktreePathKeepsRegisteredWorktree(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	initRepoWithMain(t, repo)
+
+	live := filepath.Join(root, "worktrees", "feat-x")
+	if err := AddWorktreeAt(repo, []string{"-b", "feat/x", live}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ClearStaleWorktreePath(repo, live); err == nil {
+		t.Error("ClearStaleWorktreePath on a registered worktree = nil, want error")
+	}
+	if _, err := os.Stat(filepath.Join(live, "README")); err != nil {
+		t.Errorf("registered worktree was damaged: %v", err)
+	}
+}
+
+func TestClearStaleWorktreePathKeepsCheckoutWithGitDir(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	initRepoWithMain(t, repo)
+
+	// Registration lost (e.g. the main repo was re-cloned) but the checkout is
+	// still there. Deleting it would throw away real work.
+	orphan := filepath.Join(root, "worktrees", "feat-x")
+	if err := os.MkdirAll(orphan, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, ".git"), []byte("gitdir: /gone\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ClearStaleWorktreePath(repo, orphan); err == nil {
+		t.Error("ClearStaleWorktreePath on a checkout with .git = nil, want error")
+	}
+	if _, err := os.Stat(filepath.Join(orphan, ".git")); err != nil {
+		t.Errorf("orphan checkout was deleted: %v", err)
+	}
+}

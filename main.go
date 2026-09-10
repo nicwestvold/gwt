@@ -757,6 +757,9 @@ func runWorkspaceAdd(cfg *config.Config, wsName string, ws config.WorkspaceEntry
 	var created []string
 	for _, m := range members {
 		worktreePath := filepath.Join(group, m.Short)
+		if err := git.ClearStaleWorktreePath(m.Path, worktreePath); err != nil {
+			return "", err
+		}
 		var gitArgs []string
 		if m.IsPrimary {
 			gitArgs = parsed.Build(worktreePath)
@@ -766,6 +769,9 @@ func runWorkspaceAdd(cfg *config.Config, wsName string, ws config.WorkspaceEntry
 			gitArgs = []string{"-b", parsed.Branch, worktreePath, git.MainBranchRef(m.Path, m.MainBranch)}
 		}
 		if err := git.AddWorktreeAt(m.Path, gitArgs); err != nil {
+			if len(created) == 0 {
+				return "", fmt.Errorf("creating worktree for %s failed: %w", m.Name, err)
+			}
 			return "", fmt.Errorf("creating worktree for %s failed: %w\ncreated so far: %v\nrun `gwt rm` from one of them to unwind", m.Name, err, created)
 		}
 		created = append(created, worktreePath)
@@ -907,10 +913,12 @@ func runWorkspaceRemove(cfg *config.Config, wsName string, ws config.WorkspaceEn
 		}
 	}
 
-	// Clean the empty group dir (best-effort, only if everything removed).
+	// Clear the group dir (best-effort, only if everything removed). Recursive:
+	// git can leave ignored build output behind, and anything still sitting here
+	// would block a later `gwt add` on the same branch.
 	root, rootErr := ws.ResolveWorktreeRoot(wsName)
 	if rootErr == nil && len(failures) == 0 {
-		_ = os.Remove(group)
+		_ = os.RemoveAll(group)
 		git.CleanEmptyParents(group, root)
 	}
 

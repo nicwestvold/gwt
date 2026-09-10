@@ -477,3 +477,71 @@ func TestParseListOptions(t *testing.T) {
 		})
 	}
 }
+
+func TestRunWorkspaceAddClearsStaleGroupDir(t *testing.T) {
+	root := t.TempDir()
+	primary := filepath.Join(root, "app")
+	follower := filepath.Join(root, "app-plugins")
+	mainTestInitRepo(t, primary)
+	mainTestInitRepo(t, follower)
+
+	wtRoot := filepath.Join(root, "worktrees")
+	cfg := &config.Config{
+		Repos: map[string]config.RepoEntry{
+			"acme/app":         {Path: primary, MainBranch: "main"},
+			"acme/app-plugins": {Path: follower, MainBranch: "main"},
+		},
+	}
+	ws := config.WorkspaceEntry{
+		Members:      []string{"app", "app-plugins"},
+		Primary:      "app",
+		WorktreeRoot: wtRoot,
+	}
+
+	// A previous remove left build output behind in the primary's slot.
+	stale := filepath.Join(wtRoot, "feat-x", "app", "public", "build")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, "manifest.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := runWorkspaceAdd(cfg, "app", ws, []string{"-b", "feat/x"}); err != nil {
+		t.Fatalf("runWorkspaceAdd over stale dir: %v", err)
+	}
+	for _, short := range []string{"app", "app-plugins"} {
+		if _, err := os.Stat(filepath.Join(wtRoot, "feat-x", short, "README")); err != nil {
+			t.Errorf("missing worktree for %s: %v", short, err)
+		}
+	}
+}
+
+func TestRunWorkspaceRemoveClearsWholeGroupDir(t *testing.T) {
+	root := t.TempDir()
+	primary := filepath.Join(root, "app")
+	mainTestInitRepo(t, primary)
+
+	wtRoot := filepath.Join(root, "worktrees")
+	cfg := &config.Config{
+		Repos: map[string]config.RepoEntry{"acme/app": {Path: primary, MainBranch: "main"}},
+	}
+	ws := config.WorkspaceEntry{Members: []string{"app"}, Primary: "app", WorktreeRoot: wtRoot}
+
+	if _, err := runWorkspaceAdd(cfg, "app", ws, []string{"-b", "feat/x"}); err != nil {
+		t.Fatalf("setup add failed: %v", err)
+	}
+
+	// Stray file beside the member worktrees, e.g. a .DS_Store.
+	group := filepath.Join(wtRoot, "feat-x")
+	if err := os.WriteFile(filepath.Join(group, ".DS_Store"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := runWorkspaceRemove(cfg, "app", ws, group, false, false); err != nil {
+		t.Fatalf("runWorkspaceRemove error: %v", err)
+	}
+	if _, err := os.Stat(group); !os.IsNotExist(err) {
+		t.Error("group dir still present after remove")
+	}
+}

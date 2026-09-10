@@ -228,6 +228,9 @@ func (r *Repo) Add(args []string, baseDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := ClearStaleWorktreePath(r.Dir, worktreePath); err != nil {
+		return "", err
+	}
 
 	fullArgs := append([]string{"worktree", "add"}, gitArgs...)
 

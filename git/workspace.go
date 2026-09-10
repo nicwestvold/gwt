@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -117,4 +118,50 @@ func RunSetup(command, dir string) error {
 		return fmt.Errorf("setup command %q (in %s) failed: %w", command, dir, err)
 	}
 	return nil
+}
+
+// ClearStaleWorktreePath removes a directory left behind at path by a worktree
+// git no longer tracks. `git worktree add` refuses any path that already
+// exists, so a single surviving file — an ignored build artifact, say — blocks
+// that branch name forever.
+//
+// Two cases are refused instead of deleted, because both mean live files:
+// a path git still lists as a worktree, and a path holding a .git entry
+// (a checkout whose registration was lost, e.g. after the repo was re-cloned).
+func ClearStaleWorktreePath(repoDir, path string) error {
+	if _, err := os.Stat(path); err != nil {
+		return nil
+	}
+	infos, err := (&Repo{Dir: repoDir}).ListWorktreesFull()
+	if err != nil {
+		return err
+	}
+	for _, info := range infos {
+		if samePath(info.Path, path) {
+			return fmt.Errorf("%s is already a worktree; remove it with `gwt rm %s`", path, path)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(path, ".git")); err == nil {
+		return fmt.Errorf("%s looks like a checkout git has lost track of (it still has a .git entry); inspect it and delete it by hand", path)
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("failed to clear stale worktree dir %s: %w", path, err)
+	}
+	fmt.Fprintf(os.Stderr, "cleared stale worktree dir: %s\n", path)
+	return nil
+}
+
+// samePath compares two paths with symlinks resolved, so a worktree registered
+// under /var/... matches the same dir reached via /private/var/....
+func samePath(a, b string) bool {
+	resolve := func(p string) string {
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+		if real, err := filepath.EvalSymlinks(p); err == nil {
+			p = real
+		}
+		return filepath.Clean(p)
+	}
+	return resolve(a) == resolve(b)
 }
