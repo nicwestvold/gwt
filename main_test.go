@@ -545,3 +545,62 @@ func TestRunWorkspaceRemoveClearsWholeGroupDir(t *testing.T) {
 		t.Error("group dir still present after remove")
 	}
 }
+
+func TestUseAction(t *testing.T) {
+	root := t.TempDir()
+	repoDir := filepath.Join(root, "app")
+	mainTestInitRepo(t, repoDir)
+	repo := &git.Repo{Dir: repoDir}
+
+	live := filepath.Join(root, "worktrees", "checked-out")
+	if err := git.AddWorktreeAt(repoDir, []string{"-b", "checked/out", live}); err != nil {
+		t.Fatal(err)
+	}
+	// A branch with no worktree.
+	cmd := exec.Command("git", "-C", repoDir, "branch", "lonely/branch")
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("existing worktree", func(t *testing.T) {
+		path, create, err := useAction(repo, "checked/out")
+		if err != nil {
+			t.Fatalf("useAction error: %v", err)
+		}
+		if create {
+			t.Error("create = true, want false for an existing worktree")
+		}
+		// git reports the worktree path with symlinks resolved (/var -> /private/var).
+		want, err := filepath.EvalSymlinks(live)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if path != want {
+			t.Errorf("path = %q, want %q", path, want)
+		}
+	})
+
+	t.Run("branch without worktree", func(t *testing.T) {
+		_, create, err := useAction(repo, "lonely/branch")
+		if err != nil {
+			t.Fatalf("useAction error: %v", err)
+		}
+		if !create {
+			t.Error("create = false, want true for a branch with no worktree")
+		}
+	})
+
+	t.Run("unknown branch", func(t *testing.T) {
+		_, create, err := useAction(repo, "no/such-branch")
+		if err == nil {
+			t.Fatal("useAction on an unknown branch = nil error, want error")
+		}
+		if create {
+			t.Error("create = true, want false for an unknown branch")
+		}
+		if !strings.Contains(err.Error(), "gwt add -b no/such-branch") {
+			t.Errorf("error %q does not suggest `gwt add -b`", err)
+		}
+	})
+}

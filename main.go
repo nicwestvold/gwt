@@ -298,47 +298,52 @@ installed via 'gwt init'.`,
 				return cmd.Help()
 			}
 		}
-
-		repo, err := git.NewRepo()
-		if err != nil {
-			return err
-		}
-
-		// Workspace fan-out: if this repo is a workspace member, create
-		// worktrees for all members instead of the single-repo flow.
-		if canonical, nameErr := repo.CanonicalName(); nameErr == nil {
-			if cfg, cfgErr := config.Load(); cfgErr == nil {
-				if wsName, ws, ok := cfg.WorkspaceForRepo(canonical); ok {
-					cd, addErr := runWorkspaceAdd(cfg, wsName, ws, args)
-					if addErr != nil {
-						return addErr
-					}
-					git.WriteCdFile(cd)
-					return nil
-				}
-			}
-		}
-
-		baseDir, canonicalName, err := worktreeBaseDir(repo)
-		if err != nil {
-			return err
-		}
-
-		if !repo.IsBare {
-			if err := os.MkdirAll(baseDir, 0o755); err != nil {
-				return fmt.Errorf("failed to create worktree directory: %w", err)
-			}
-			if err := ensureRegistered(repo, canonicalName); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: failed to register repo in config: %v\n", err)
-			}
-		}
-
-		path, err := repo.Add(args, baseDir)
-		if err == nil && path != "" {
-			git.WriteCdFile(path)
-		}
-		return err
+		return runAdd(args)
 	},
+}
+
+// runAdd creates the worktree (or, in a workspace, the whole branch group) for
+// the given `gwt add` arguments and records the directory to cd into.
+func runAdd(args []string) error {
+	repo, err := git.NewRepo()
+	if err != nil {
+		return err
+	}
+
+	// Workspace fan-out: if this repo is a workspace member, create
+	// worktrees for all members instead of the single-repo flow.
+	if canonical, nameErr := repo.CanonicalName(); nameErr == nil {
+		if cfg, cfgErr := config.Load(); cfgErr == nil {
+			if wsName, ws, ok := cfg.WorkspaceForRepo(canonical); ok {
+				cd, addErr := runWorkspaceAdd(cfg, wsName, ws, args)
+				if addErr != nil {
+					return addErr
+				}
+				git.WriteCdFile(cd)
+				return nil
+			}
+		}
+	}
+
+	baseDir, canonicalName, err := worktreeBaseDir(repo)
+	if err != nil {
+		return err
+	}
+
+	if !repo.IsBare {
+		if err := os.MkdirAll(baseDir, 0o755); err != nil {
+			return fmt.Errorf("failed to create worktree directory: %w", err)
+		}
+		if err := ensureRegistered(repo, canonicalName); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to register repo in config: %v\n", err)
+		}
+	}
+
+	path, err := repo.Add(args, baseDir)
+	if err == nil && path != "" {
+		git.WriteCdFile(path)
+	}
+	return err
 }
 
 // partitionRemoveArgs separates flags from positional arguments for the remove
@@ -559,18 +564,37 @@ Requires shell integration (eval "$(gwt shell-init)") for the cd to work.`,
 			branch = args[0]
 		}
 
-		path, found, err := repo.FindWorktreeByBranch(branch)
+		path, create, err := useAction(repo, branch)
 		if err != nil {
 			return err
 		}
-		if !found {
-			return fmt.Errorf("no worktree found for branch %q\nRun 'gwt add %s' to create one", branch, branch)
+		if create {
+			fmt.Printf("no worktree for %s yet, creating one\n", branch)
+			return runAdd([]string{branch})
 		}
 
 		git.WriteCdFile(path)
 		fmt.Println(path)
 		return nil
 	},
+}
+
+// useAction decides what `gwt use <branch>` should do: cd into the worktree
+// that already has branch checked out, or create one when the branch exists but
+// no worktree holds it. A branch that exists nowhere is an error — creating it
+// needs `gwt add -b`, a different intent than switching to it.
+func useAction(repo *git.Repo, branch string) (path string, create bool, err error) {
+	path, found, err := repo.FindWorktreeByBranch(branch)
+	if err != nil {
+		return "", false, err
+	}
+	if found {
+		return path, false, nil
+	}
+	if git.BranchExists(repo.Dir, branch) {
+		return "", true, nil
+	}
+	return "", false, fmt.Errorf("no branch or worktree named %q\nRun 'gwt add -b %s' to create both", branch, branch)
 }
 
 var shellInitCmd = &cobra.Command{

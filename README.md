@@ -138,7 +138,7 @@ gwt use                                  # interactively select a worktree
 gwt use my-feature                       # cd into the worktree for this branch
 ```
 
-With no branch, `gwt use` opens the enriched worktree list; use the arrow keys or `j`/`k` to move, Enter to select, and `q` or Ctrl-C to cancel. With a branch, it finds that worktree directly. Both forms switch through the same shell integration. If a named branch has no worktree, it suggests `gwt add`.
+With no branch, `gwt use` opens the enriched worktree list; use the arrow keys or `j`/`k` to move, Enter to select, and `q` or Ctrl-C to cancel. With a branch, it finds that worktree directly. Both forms switch through the same shell integration. If a named branch has no worktree but the branch exists, `gwt use` creates the worktree for you. If the branch does not exist either, it points you at `gwt add -b`.
 
 ### Workspaces
 
