@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -234,12 +235,13 @@ func (r *Repo) Add(args []string, baseDir string) (string, error) {
 
 	fullArgs := append([]string{"worktree", "add"}, gitArgs...)
 
-	// First attempt: capture stderr to detect "invalid reference"
+	// First attempt: stream stderr (hook output, progress) and keep a copy to
+	// detect "invalid reference"
 	var stderrBuf bytes.Buffer
 	cmd := exec.Command("git", fullArgs...)
 	cmd.Dir = r.Dir
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = &stderrBuf
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
 	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
 		if strings.Contains(stderrBuf.String(), "invalid reference:") {
@@ -262,8 +264,6 @@ func (r *Repo) Add(args []string, baseDir string) (string, error) {
 			}
 			return worktreePath, nil
 		}
-		// Other error — flush captured stderr so user sees it
-		_, _ = os.Stderr.Write(stderrBuf.Bytes())
 		return "", fmt.Errorf("git worktree add failed: %w", err)
 	}
 	return worktreePath, nil

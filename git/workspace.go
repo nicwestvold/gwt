@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,7 +40,7 @@ func AddWorktreeAt(repoDir string, gitArgs []string) error {
 	var stderr bytes.Buffer
 	cmd := exec.Command("git", append(append([]string{}, base...), gitArgs...)...)
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = &stderr
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
 	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
 		if strings.Contains(stderr.String(), "invalid reference:") {
@@ -58,7 +59,6 @@ func AddWorktreeAt(repoDir string, gitArgs []string) error {
 			}
 			return nil
 		}
-		_, _ = os.Stderr.Write(stderr.Bytes())
 		return fmt.Errorf("git worktree add failed: %w", err)
 	}
 	return nil
