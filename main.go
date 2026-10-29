@@ -313,7 +313,9 @@ func runAdd(args []string) error {
 	// Workspace fan-out: if this repo is a workspace member, create
 	// worktrees for all members instead of the single-repo flow.
 	if canonical, nameErr := repo.CanonicalName(); nameErr == nil {
-		if cfg, cfgErr := config.Load(); cfgErr == nil {
+		if cfg, cfgErr := config.Load(); cfgErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to load config, skipping workspace lookup: %v\n", cfgErr)
+		} else {
 			if wsName, ws, ok := cfg.WorkspaceForRepo(canonical); ok {
 				cd, addErr := runWorkspaceAdd(cfg, wsName, ws, args)
 				if addErr != nil {
@@ -426,7 +428,9 @@ Supports all git worktree remove flags (e.g., --force).`,
 		// whole branch group, identified by the argument (branch name or
 		// path) or, absent one, by the current worktree.
 		if canonical, nameErr := repo.CanonicalName(); nameErr == nil {
-			if cfg, cfgErr := config.Load(); cfgErr == nil {
+			if cfg, cfgErr := config.Load(); cfgErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to load config, skipping workspace lookup: %v\n", cfgErr)
+			} else {
 				if wsName, ws, ok := cfg.WorkspaceForRepo(canonical); ok {
 					force, positionals := partitionRemoveArgs(args)
 					if len(positionals) > 1 {
